@@ -73,7 +73,10 @@ class CustomAuthHandler
         }
 
         if (get_current_user_id()) {
-            return '<p>' . sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url()) . '</p>';
+            $message = apply_filters('fluent_auth/already_logged_in_message',
+                sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url())
+            );
+            return '<p>' . $message . '</p>';
         }
 
         $this->loadAssets();
@@ -148,7 +151,10 @@ class CustomAuthHandler
         }
 
         if (get_current_user_id()) {
-            return '<p>' . sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), esc_url(site_url())) . '</p>';
+            $message = apply_filters('fluent_auth/already_logged_in_message',
+                sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url())
+            );
+            return '<p>' . $message . '</p>';
         }
 
         $attributes = $this->getShortcodes($attributes);
@@ -206,7 +212,10 @@ class CustomAuthHandler
         }
 
         if (get_current_user_id()) {
-            return '<p>' . sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), esc_url(site_url())) . '</p>';
+            $message = apply_filters('fluent_auth/already_logged_in_message',
+                sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url())
+            );
+            return '<p>' . $message . '</p>';
         }
 
         $attributes = $this->getShortcodes($attributes);
@@ -258,9 +267,11 @@ class CustomAuthHandler
         }
 
         if (get_current_user_id()) {
-            return '<p>' . sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url()) . '</p>';
+            $message = apply_filters('fluent_auth/already_logged_in_message',
+                sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url())
+            );
+            return '<p>' . $message . '</p>';
         }
-
         $atts = $this->getShortcodes($attributes);
 
         $authForm = '<div class="fls_auth_wrapper">';
@@ -286,7 +297,10 @@ class CustomAuthHandler
         }
 
         if (get_current_user_id()) {
-            return '<p>' . sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url()) . '</p>';
+            $message = apply_filters('fluent_auth/already_logged_in_message',
+                sprintf(__('You are already logged in. <a href="%s">Go to Home Page</a>', 'fluent-security'), site_url())
+            );
+            return '<p>' . $message . '</p>';
         }
 
         $atts = $this->getShortcodes($attributes);
@@ -383,40 +397,40 @@ class CustomAuthHandler
          *
          * @param array $fields Form fields
          */
-        return apply_filters('fluent_support/registration_form_fields', [
+        return apply_filters('fluent_auth/registration_form_fields', [
             'first_name' => [
                 'required'    => true,
                 'type'        => 'text',
-                'label'       => __('First name', 'fluent-support'),
+                'label'       => __('First name', 'fluent-security'),
                 'id'          => 'fls_first_name',
-                'placeholder' => __('First name', 'fluent-support')
+                'placeholder' => __('First name', 'fluent-security')
             ],
             'last_name'  => [
                 'type'        => 'text',
-                'label'       => __('Last Name', 'fluent-support'),
+                'label'       => __('Last Name', 'fluent-security'),
                 'id'          => 'fls_last_name',
-                'placeholder' => __('Last name', 'fluent-support')
+                'placeholder' => __('Last name', 'fluent-security')
             ],
             'username'   => [
                 'required'    => true,
                 'type'        => 'text',
-                'label'       => __('Username', 'fluent-support'),
+                'label'       => __('Username', 'fluent-security'),
                 'id'          => 'fls_reg_username',
-                'placeholder' => __('Username', 'fluent-support')
+                'placeholder' => __('Username', 'fluent-security')
             ],
             'email'      => [
                 'required'    => true,
                 'type'        => 'email',
-                'label'       => __('Email Address', 'fluent-support'),
+                'label'       => __('Email Address', 'fluent-security'),
                 'id'          => 'fls_reg_email',
-                'placeholder' => __('Your Email Address', 'fluent-support')
+                'placeholder' => __('Your Email Address', 'fluent-security')
             ],
             'password'   => [
                 'required'    => true,
                 'type'        => 'password',
-                'label'       => __('Password', 'fluent-support'),
+                'label'       => __('Password', 'fluent-security'),
                 'id'          => 'fls_reg_password',
-                'placeholder' => __('Password', 'fluent-support')
+                'placeholder' => __('Password', 'fluent-security')
             ]
         ]);
     }
@@ -430,13 +444,13 @@ class CustomAuthHandler
          *
          * @param array $fields Form fields
          */
-        return apply_filters('fluent_support/reset_password_form', [
+        return apply_filters('fluent_auth/reset_password_form', [
             'user_login' => [
                 'required'    => true,
                 'type'        => 'text',
-                'label'       => __('Email Address', 'fluent-support'),
+                'label'       => __('Email Address', 'fluent-security'),
                 'id'          => 'fls_email',
-                'placeholder' => __('Your Email Address', 'fluent-support')
+                'placeholder' => __('Your Email Address', 'fluent-security')
             ]
         ]);
     }
@@ -521,7 +535,6 @@ class CustomAuthHandler
         }
 
         wp_enqueue_script('fluent_auth_login_helper', FLUENT_AUTH_PLUGIN_URL . 'dist/public/login_helper.js', [], FLUENT_AUTH_VERSION);
-
         wp_localize_script('fluent_auth_login_helper', 'fluentAuthPublic', [
             'hide'              => $hide,
             'redirect_fallback' => site_url(),
@@ -532,7 +545,6 @@ class CustomAuthHandler
                 'Password'          => __('Password', 'fluent-security')
             ]
         ]);
-
 
         $this->loaded = true;
     }
@@ -676,7 +688,6 @@ class CustomAuthHandler
         }
 
         if ($currentUserId = get_current_user_id()) { // user already registered
-
             $user = get_user_by('ID', $currentUserId);
             $redirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
 
@@ -711,10 +722,11 @@ class CustomAuthHandler
             ], 422);
         }
 
-        $redirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
+        $filteredRedirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
+        $filteredRedirectUrl = apply_filters('fluent_auth/login_redirect_url', $filteredRedirectUrl, $user, $_REQUEST);
 
         wp_send_json([
-            'redirect' => $redirectUrl
+            'redirect' => $filteredRedirectUrl
         ], 200);
     }
 
@@ -757,7 +769,6 @@ class CustomAuthHandler
             ], 422);
         }
 
-
         /*
          * Action After validate user signup validation success
          *
@@ -775,6 +786,22 @@ class CustomAuthHandler
             wp_send_json([
                 'message' => $errors->get_error_message()
             ], 422);
+        }
+
+        // let's validate the name field
+        $fullName = trim(Arr::get($formData, 'first_name') . ' ' . Arr::get($formData, 'last_name'));
+        if (!empty($fullName)) {
+            // check if the name is valid
+            // Consider if there has any special characters like +, -, *, /, etc
+            // only check the +,-,*,$,/,=,%,!,@,#,^,&,*,(,),_,{,},[,],:,;,',",<,>,?,|,`,~,,
+            if (preg_match('/[\'^£$%&*()}{@#~?><>,|=_+¬-]/u', $fullName)) {
+                return __('Please provide a valid name', 'fluent-security');
+            }
+
+            // check if there has any http or https
+            if (preg_match('/http|https/', $fullName)) {
+                return __('Please provide a valid name', 'fluent-security');
+            }
         }
 
         if (apply_filters('fluent_auth/verify_signup_email', true, $formData)) {
@@ -858,6 +885,8 @@ class CustomAuthHandler
             $this->login($userId);
             $redirectUrl = Arr::get($formData, 'redirect_to', admin_url());
             $redirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
+            $redirectUrl = apply_filters('fluent_auth/login_redirect_url', $redirectUrl, $user, $formData);
+
             $message = __('Successfully registered to the site.', 'fluent-security');
         }
 
@@ -988,7 +1017,7 @@ class CustomAuthHandler
 
         $message = sprintf(__('<p>Hi %s,</p>', 'fluent-security'), $user_data->first_name) .
             __('<p>Someone has requested a new password for the following account on WordPress:</p>', 'fluent-security') .
-            sprintf(__('<p>Username: %s</p>', 'fluent-support'), $user_login) .
+            sprintf(__('<p>Username: %s</p>', 'fluent-security'), $user_login) .
             sprintf(__('<p>%s</p>', 'fluent-security'), $resetLink) .
             sprintf(__('<p>If you did not request to reset your password, please ignore this email.</p>', 'fluent-security'));
 
@@ -1069,10 +1098,10 @@ class CustomAuthHandler
             'echo'           => true,
             'redirect'       => (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'],
             'form_id'        => 'loginform',
-            'label_username' => __('Username or Email Address'),
-            'label_password' => __('Password'),
-            'label_remember' => __('Remember Me'),
-            'label_log_in'   => __('Log In'),
+            'label_username' => __('Username or Email Address', 'fluent-security'),
+            'label_password' => __('Password', 'fluent-security'),
+            'label_remember' => __('Remember Me', 'fluent-security'),
+            'label_log_in'   => __('Log In', 'fluent-security'),
             'id_username'    => 'user_login',
             'id_password'    => 'user_pass',
             'id_remember'    => 'rememberme',
@@ -1096,14 +1125,13 @@ class CustomAuthHandler
             $actionUrl = esc_url($args['action_url']);
         }
 
-        $form =
-            sprintf(
+        $form = \sprintf(
                 '<form name="%1$s" id="%1$s" action="%2$s" method="post">',
                 esc_attr($args['form_id']),
                 $actionUrl
             ) .
             $login_form_top .
-            sprintf(
+            \sprintf(
                 '<p class="login-username">
 				<label for="%1$s">%2$s</label>
 				<input type="text" name="log" id="%1$s" autocomplete="username" class="input" value="%3$s" size="20" />
@@ -1112,7 +1140,7 @@ class CustomAuthHandler
                 esc_html($args['label_username']),
                 esc_attr($args['value_username'])
             ) .
-            sprintf(
+            \sprintf(
                 '<p class="login-password">
 				<label for="%1$s">%2$s</label>
 				<input type="password" name="pwd" id="%1$s" autocomplete="current-password" class="input" value="" size="20" />
@@ -1122,14 +1150,14 @@ class CustomAuthHandler
             ) .
             $login_form_middle .
             ($args['remember'] ?
-                sprintf(
+                \sprintf(
                     '<p class="login-remember"><label><input name="rememberme" type="checkbox" id="%1$s" value="forever"%2$s /> %3$s</label></p>',
                     esc_attr($args['id_remember']),
                     ($args['value_remember'] ? ' checked="checked"' : ''),
                     esc_html($args['label_remember'])
                 ) : ''
             ) .
-            sprintf(
+            \sprintf(
                 '<p class="login-submit">
 				<input type="submit" name="wp-submit" id="%1$s" class="button button-primary" value="%2$s" />
 				<input type="hidden" name="redirect_to" value="%3$s" />
@@ -1148,13 +1176,24 @@ class CustomAuthHandler
         }
     }
 
-
     public function sendSignupEmailVerificationHtml($formData)
     {
         try {
             $verifcationCode = str_pad(random_int(100123, 900987), 6, 0, STR_PAD_LEFT);
         } catch (\Exception $e) {
             $verifcationCode = str_pad(mt_rand(100123, 900987), 6, 0, STR_PAD_LEFT);
+        }
+
+        $ipAddress = Helper::getIp();
+
+        $existingCount = flsDb()->table('fls_login_hashes')
+            ->where('ip_address', $ipAddress)
+            ->where('use_type', 'signup_verification')
+            ->where('created_at', '>', date('Y-m-d H:i:s', current_time('timestamp') - 60 * 60))
+            ->count();
+
+        if ($existingCount > 5) {
+            return __('Too many requests. Please try again later', 'fluent-security');
         }
 
         $hash = wp_hash_password($formData['email']) . time() . '_' . $verifcationCode;
