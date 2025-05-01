@@ -158,7 +158,7 @@ Absolutely not! From the very first, We were careful about this. It stores all t
 
 == Changelog ==
 
-= 1.1.0 - Date: Dec 16, 2014 =
+= 1.1.0 - Date: Dec 16, 2024 =
 * Added hooks for 3rd party developers
 * Improvement on Authentication flow
 
