@@ -38,11 +38,9 @@ class CustomAuthHandler
         }
 
         if (apply_filters('fluent_auth/respect_front_login_url', true) && strpos($redirect_to, '/wp-admin') === false) {
-            return $redirect_to; // it's a frontend URl so let's not alter that
-        }
-
-        if ($url = $this->getDefaultLoginRedirectUrl($user)) {
-            return $url;
+            // it's a frontend redirect url
+        } else if ($url = $this->getDefaultLoginRedirectUrl($user)) {
+            $redirect_to = $url;
         }
 
         return $redirect_to;
@@ -653,7 +651,6 @@ class CustomAuthHandler
      */
     public function handleLoginAjax()
     {
-
         if (!$this->isEnabled()) {
             wp_send_json([
                 'message' => __('Login is not enabled', 'fluent-security')
@@ -684,10 +681,11 @@ class CustomAuthHandler
 
         $redirectUrl = admin_url();
         if (isset($data['redirect_to']) && filter_var($data['redirect_to'], FILTER_VALIDATE_URL)) {
-            $redirectUrl = sanitize_url($data['redirect_to']);
+            $userRedirect = sanitize_url($data['redirect_to']);
+            $redirectUrl = wp_validate_redirect($userRedirect, $redirectUrl);
         }
 
-        if ($currentUserId = get_current_user_id()) { // user already registered
+        if ($currentUserId = get_current_user_id()) { // user already logged in
             $user = get_user_by('ID', $currentUserId);
             $redirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
 
@@ -782,7 +780,10 @@ class CustomAuthHandler
             $formData['username'] = sanitize_user($formData['email']);
         }
 
-        $errors = AuthService::checkUserRegDataErrors($formData['username'], $formData['email']);
+        $errors = AuthService::checkUserRegDataErrors($formData['username'], $formData['email'], [
+            '__validated' => true
+        ]);
+
         if ($errors->has_errors()) {
             wp_send_json([
                 'message' => $errors->get_error_message()
@@ -815,51 +816,26 @@ class CustomAuthHandler
             } else {
                 $token = $formData['_email_verification_token'];
                 $verificationHash = $formData['_email_verification_hash'];
+                $isTokenValidated = AuthService::verifyTokenHash($verificationHash, $token);
 
-                $logHash = flsDb()->table('fls_login_hashes')
-                    ->where('login_hash', $verificationHash)
-                    ->where('status', 'issued')
-                    ->where('use_type', 'signup_verification')
-                    ->first();
-
-                if (!$logHash) {
+                if (is_wp_error($isTokenValidated)) {
                     wp_send_json([
-                        'message' => __('Please provide a valid vefification code that sent to your email address', 'fluent-security')
+                        'message' => $isTokenValidated->get_error_message()
                     ], 422);
                 }
-
-                // check if it got expired or not
-                if ($logHash->used_count > 5 || strtotime($logHash->valid_till) < current_time('timestamp')) {
-                    wp_send_json([
-                        'message' => __('Your verification code has beeen expired. Please try again', 'fluent-security')
-                    ], 422);
-                }
-
-                if (!wp_check_password($token, $logHash->two_fa_code_hash)) {
-                    flsDb()->table('fls_login_hashes')->where('id', $logHash->id)
-                        ->update([
-                            'used_count' => $logHash->used_count + 1
-                        ]);
-
-                    wp_send_json([
-                        'message' => __('Please provide a valid vefification code that sent to your email address', 'fluent-security')
-                    ], 422);
-                }
-
-                flsDb()->table('fls_login_hashes')->where('id', $logHash->id)
-                    ->update([
-                        'used_count' => $logHash->used_count + 1,
-                        'status'     => 'used'
-                    ]);
             }
         }
 
+        $userRole = apply_filters('fluent_auth/signup_default_role', get_option('default_role'), $formData);
+        do_action('fluent_auth/before_creating_user', $formData);
+
         $userId = AuthService::registerNewUser($formData['username'], $formData['email'], $formData['password'], [
-            'role'        => apply_filters('fluent_auth/signup_default_role', get_option('default_role'), $formData),
+            'role'        => $userRole,
             'first_name'  => Arr::get($formData, 'first_name'),
             'last_name'   => Arr::get($formData, 'last_name'),
             '__validated' => true
         ]);
+
 
         if (is_wp_error($userId)) {
             wp_send_json([
@@ -867,27 +843,17 @@ class CustomAuthHandler
             ], 422);
         }
 
-        /*
-         * Action After creating WP user from ticket sign up form
-         *
-         * @since v1.0.0
-         * @param array $formData
-         */
-        do_action('fluent_auth/after_creating_user', $userId, $formData);
-
         $user = get_user_by('ID', $userId);
-
         $isAutoLogin = apply_filters('fluent_auth/auto_login_after_signup', true, $user);
-
         $message = __('Registration has been completed. Please login now', 'fluent-security');
 
         $redirectUrl = false;
         if ($isAutoLogin) {
             $this->login($userId);
             $redirectUrl = Arr::get($formData, 'redirect_to', admin_url());
+            $redirectUrl = wp_validate_redirect($redirectUrl, admin_url());
             $redirectUrl = apply_filters('login_redirect', $redirectUrl, false, $user);
             $redirectUrl = apply_filters('fluent_auth/login_redirect_url', $redirectUrl, $user, $formData);
-
             $message = __('Successfully registered to the site.', 'fluent-security');
         }
 
@@ -1014,13 +980,13 @@ class CustomAuthHandler
          * @since v1.5.7
          * @param string $mailSubject
          */
-        $mailSubject = apply_filters("fluent_auth/reset_password_mail_subject", sprintf(__('Reset your password for %s', 'fluent-security'), get_bloginfo('name')));
+        $mailSubject = apply_filters('fluent_auth/reset_password_mail_subject', sprintf(__('Reset your password for %s', 'fluent-security'), get_bloginfo('name')));
 
-        $message = sprintf(__('<p>Hi %s,</p>', 'fluent-security'), $user_data->first_name) .
+        $message = \sprintf(__('<p>Hi %s,</p>', 'fluent-security'), $user_data->first_name) .
             __('<p>Someone has requested a new password for the following account on WordPress:</p>', 'fluent-security') .
-            sprintf(__('<p>Username: %s</p>', 'fluent-security'), $user_login) .
-            sprintf(__('<p>%s</p>', 'fluent-security'), $resetLink) .
-            sprintf(__('<p>If you did not request to reset your password, please ignore this email.</p>', 'fluent-security'));
+            \sprintf(__('<p>Username: %s</p>', 'fluent-security'), $user_login) .
+            \sprintf(__('<p>%s</p>', 'fluent-security'), $resetLink) .
+            \sprintf(__('<p>If you did not request to reset your password, please ignore this email.</p>', 'fluent-security'));
 
         /*
          * Filter reset password email body text
@@ -1070,7 +1036,7 @@ class CustomAuthHandler
         return $errors;
     }
 
-    protected function login($userId)
+    public function login($userId)
     {
         /*
          * Action before login
@@ -1082,7 +1048,7 @@ class CustomAuthHandler
 
         wp_clear_auth_cookie();
         wp_set_current_user($userId);
-        wp_set_auth_cookie($userId);
+        wp_set_auth_cookie($userId, true, is_ssl());
 
         /*
          * Action after login
@@ -1171,7 +1137,7 @@ class CustomAuthHandler
             '</form>';
 
         if ($args['echo']) {
-            echo $form;
+            echo $form; // @phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
         } else {
             return $form;
         }
@@ -1197,7 +1163,7 @@ class CustomAuthHandler
             return __('Too many requests. Please try again later', 'fluent-security');
         }
 
-        $hash = wp_hash_password($formData['email']) . time() . '_' . $verifcationCode;
+        $hash = wp_hash_password($formData['email']) . time();
         $data = array(
             'login_hash'       => $hash,
             'status'           => 'issued',
@@ -1235,33 +1201,37 @@ class CustomAuthHandler
 
         \wp_mail($formData['email'], $mailSubject, $message, $headers);
 
-
         ob_start();
         ?>
 
         <div class="fls_signup_verification">
-            <div class="fls_field_group fls_field_vefication">
-                <p><?php echo esc_html(sprintf(__('A verification code as been sent to %s. Please provide the code bellow: ', 'fluent-'), $formData['email'])) ?></p>
+            <div class="fls_field_group fls_field_verification">
+                <p class="fls_2fa_instruction"><?php echo esc_html(\sprintf(__('A verification code has been sent to %s. Please provide the code below: ', 'fluent-security'), $formData['email'])) ?></p>
                 <input type="hidden" name="_email_verification_hash" value="<?php echo esc_attr($hash); ?>"/>
                 <div class="fls_field_label is-required"><label
-                        for="fls_field_vefication"><?php _e('Vefication Code', 'fluent-security'); ?></label></div>
-                <div class="fs_input_wrap"><input type="text" id="fls_field_vefication" placeholder=""
-                                                  name="_email_verification_token" required></div>
+                        for="fls_field_verification"><?php _e('Verification Code', 'fluent-security'); ?></label></div>
+                <div class="fs_input_wrap">
+                    <input type="text" id="fls_field_verification" class="input"
+                           placeholder="<?php _e('2FA Code', 'fluent-security'); ?>" name="_email_verification_token"
+                           required></div>
             </div>
-            <button type="submit" id="fls_verification_submit">
-                <svg version="1.1" class="fls_loading_svg" x="0px" y="0px" width="40px" height="20px"
-                     viewBox="0 0 50 50" style="enable-background:new 0 0 50 50;" xml:space="preserve">
+            <p class="submit">
+                <button type="submit" class="button button-primary" id="fls_verification_submit">
+                    <svg version="1.1" class="fls_loading_svg" x="0px" y="0px" width="40px" height="20px"
+                         viewBox="0 0 50 50" style="enable-background:new 0 0 50 50;display: none;"
+                         xml:space="preserve">
                     <path fill="currentColor"
                           d="M43.935,25.145c0-10.318-8.364-18.683-18.683-18.683c-10.318,0-18.683,8.365-18.683,18.683h4.068c0-8.071,6.543-14.615,14.615-14.615c8.072,0,14.615,6.543,14.615,14.615H43.935z">
                         <animateTransform attributeType="xml" attributeName="transform" type="rotate" from="0 25 25"
                                           to="360 25 25" dur="0.6s" repeatCount="indefinite"></animateTransform>
                     </path>
                 </svg>
-                <span><?php _e('Complete Signup', 'fluent-security'); ?></span>
-            </button>
+                    <span><?php _e('Complete Signup', 'fluent-security'); ?></span>
+                </button>
+            </p>
         </div>
-
         <?php
         return ob_get_clean();
     }
+
 }

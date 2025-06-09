@@ -28,6 +28,11 @@ class AuthService
             return self::makeLogin($userExist, $provider);
         }
 
+        $signupEnabled = apply_filters('fluent_auth/signup_enabled', get_option('users_can_register'));
+        if (!$signupEnabled) {
+            return new \WP_Error('signup_disabled', __('User registration is disabled', 'fluent-security'));
+        }
+
         // let's create the user here
         $createUserData = [
             'email'    => $userData['email'],
@@ -55,6 +60,7 @@ class AuthService
             'user_url'    => Arr::get($userData, 'user_url'),
             'full_name'   => Arr::get($userData, 'full_name'),
             'description' => Arr::get($userData, 'description'),
+            '__validated' => true
         ]);
 
         if (is_wp_error($userId)) {
@@ -107,6 +113,14 @@ class AuthService
 
     public static function makeLogin($user, $provider = '')
     {
+        if (is_numeric($user)) {
+            $user = get_user_by('ID', $user);
+        }
+
+        if (!$user) {
+            return new \WP_Error('user_not_found', __('User not found', 'fluent-security'));
+        }
+
         $canLogin = apply_filters('fluent_auth/can_user_login', false, $user, $provider);
 
         if ($provider && is_wp_error($canLogin)) {
@@ -150,7 +164,6 @@ class AuthService
     public static function registerNewUser($user_login, $user_email, $user_pass = '', $extraData = [])
     {
         $user_email = apply_filters('user_registration_email', $user_email);
-
 
         if (empty($extraData['__validated'])) {
             $errors = self::checkUserRegDataErrors($user_login, $user_email);
@@ -205,8 +218,10 @@ class AuthService
             $data['role'] = $extraData['role'];
         }
 
-        $user_id = wp_insert_user($data);
 
+        do_action('fluent_auth/before_creating_user', $data);
+
+        $user_id = wp_insert_user($data);
         if (!$user_id || is_wp_error($user_id)) {
             $errors->add('registerfail', __('<strong>Error</strong>: Could not register you. Please contact the site admin!', 'fluent-security')
             );
@@ -220,13 +235,22 @@ class AuthService
             }
         }
 
+        /*
+         * Action After creating WP user from sign up form
+         *
+         * @since v1.0.0
+         * @param int $user_id User ID of the created user
+         * @param array $data User data array that was used to create the user
+         */
+        do_action('fluent_auth/after_creating_user', $user_id, $data);
+
         do_action('register_new_user', $user_id);
 
         return $user_id;
     }
 
 
-    public static function checkUserRegDataErrors($user_login, $user_email)
+    public static function checkUserRegDataErrors($user_login, $user_email, $extraArgs = [])
     {
         $errors = new \WP_Error();
         $sanitized_user_login = sanitize_user($user_login);
@@ -259,10 +283,45 @@ class AuthService
             );
         }
 
-        do_action('register_post', $sanitized_user_login, $user_email, $errors);
-
-        $errors = apply_filters('registration_errors', $errors, $sanitized_user_login, $user_email);
+        if(empty($extraArgs['__validated'])) {
+            do_action('register_post', $sanitized_user_login, $user_email, $errors);
+            $errors = apply_filters('registration_errors', $errors, $sanitized_user_login, $user_email);
+        }
 
         return $errors;
+    }
+
+    public static function verifyTokenHash($verificationHash, $token)
+    {
+        $logHash = flsDb()->table('fls_login_hashes')
+            ->where('login_hash', $verificationHash)
+            ->where('status', 'issued')
+            ->where('use_type', 'signup_verification')
+            ->first();
+
+        if (!$logHash) {
+            return new \WP_Error('invalid_verification_code', __('Please provide a valid vefification code that sent to your email address', 'fluent-security'));
+        }
+
+        // check if it got expired or not
+        if ($logHash->used_count > 5 || strtotime($logHash->valid_till) < current_time('timestamp')) {
+            return new \WP_Error('verification_code_expired', __('Your verification code has beeen expired. Please try again', 'fluent-security'));
+        }
+
+        if (!wp_check_password($token, $logHash->two_fa_code_hash)) {
+            flsDb()->table('fls_login_hashes')->where('id', $logHash->id)
+                ->update([
+                    'used_count' => $logHash->used_count + 1
+                ]);
+            return new \WP_Error('invalid_verification_code', __('Please provide a valid vefification code that sent to your email address', 'fluent-security'));
+        }
+
+        flsDb()->table('fls_login_hashes')->where('id', $logHash->id)
+            ->update([
+                'used_count' => $logHash->used_count + 1,
+                'status'     => 'used'
+            ]);
+
+        return true;
     }
 }

@@ -20,6 +20,7 @@ class Helper
             'login_try_limit'         => 5,
             'login_try_timing'        => 30,
             'disable_users_rest'      => 'no',
+            'secure_signup_form'      => 'yes',
             'notification_user_roles' => [],
             'notify_on_blocked'       => 'no',
             'notification_email'      => '{admin_email}',
@@ -27,6 +28,7 @@ class Helper
             'digest_summary'          => '',
             'magic_login'             => 'no',
             'magic_restricted_roles'  => [],
+            'magic_link_primary'      => 'no',
             'email2fa'                => 'no',
             'email2fa_roles'          => ['administrator', 'editor', 'author'],
             'disable_admin_bar'       => 'no',
@@ -50,7 +52,7 @@ class Helper
 
     public static function getAppPermission()
     {
-        return 'manage_options';
+        return apply_filters('fluent_auth/app_permission', 'manage_options');
     }
 
     public static function getUserRoles($keyed = false)
@@ -235,15 +237,20 @@ class Helper
         }
 
         $defaults = [
-            'enabled'              => 'no',
-            'enable_google'        => 'no',
-            'google_key_method'    => 'wp_config',
-            'google_client_id'     => '',
-            'google_client_secret' => '',
-            'enable_github'        => 'no',
-            'github_key_method'    => 'wp_config',
-            'github_client_id'     => '',
-            'github_client_secret' => ''
+            'enabled'                => 'no',
+            'enable_google'          => 'no',
+            'google_key_method'      => 'wp_config',
+            'google_client_id'       => '',
+            'google_client_secret'   => '',
+            'enable_github'          => 'no',
+            'github_key_method'      => 'wp_config',
+            'github_client_id'       => '',
+            'github_client_secret'   => '',
+            'enable_facebook'        => 'no',
+            'facebook_key_method'    => 'wp_config',
+            'facebook_client_id'     => '',
+            'facebook_client_secret' => '',
+            'facebook_api_version'   => 'v12.0'
         ];
 
         $settings = get_option('__fls_social_auth_settings');
@@ -264,6 +271,11 @@ class Helper
             if ($settings['github_key_method'] == 'wp_config') {
                 $settings['github_client_id'] = (defined('FLUENT_AUTH_GITHUB_CLIENT_ID')) ? FLUENT_AUTH_GITHUB_CLIENT_ID : '';
                 $settings['github_client_secret'] = (defined('FLUENT_AUTH_GITHUB_CLIENT_SECRET')) ? FLUENT_AUTH_GITHUB_CLIENT_SECRET : '';
+            }
+            if ($settings['facebook_key_method'] == 'wp_config') {
+                $settings['facebook_client_id'] = (defined('FLUENT_AUTH_FACEBOOK_CLIENT_ID')) ? FLUENT_AUTH_FACEBOOK_CLIENT_ID : '';
+                $settings['facebook_client_secret'] = (defined('FLUENT_AUTH_FACEBOOK_CLIENT_SECRET')) ? FLUENT_AUTH_FACEBOOK_CLIENT_SECRET : '';
+                $settings['facebook_api_version'] = sanitize_text_field($settings['facebook_api_version']);
             }
         }
 
@@ -385,5 +397,110 @@ class Helper
             }
             return false;
         }
+    }
+
+    public static function getAuthCustomizerSettings()
+    {
+
+        $siteTitle = get_bloginfo('name');
+        // get site logo
+        $siteLogo = '';
+
+        $tagLine = get_bloginfo('description');
+
+        $defaults = [
+            'status' => 'no',
+            'login'  => [
+                'banner' => [
+                    'hidden'           => false,
+                    'type'             => 'banner',
+                    'position'         => 'left',
+                    'logo'             => $siteLogo,
+                    'title'            => 'Welcome to ' . $siteTitle,
+                    'description'      => $tagLine,
+                    'title_color'      => '#19283a',
+                    'text_color'       => '#525866',
+                    'background_image' => '',
+                    'background_color' => '#F5F7FA'
+                ],
+                'form'   => [
+                    'type'               => 'form',
+                    'position'           => 'right',
+                    'title'              => 'Login to ' . $siteTitle,
+                    'description'        => 'Please enter your details to login',
+                    'title_color'        => '#19283a',
+                    'text_color'         => '#525866',
+                    'button_label'       => 'Login',
+                    'button_color'       => '#2B2E33',
+                    'button_label_color' => '#ffffff',
+                    'background_image'   => '',
+                    'background_color'   => '#ffffff'
+                ]
+            ],
+            'signup' => [
+                'banner' => [
+                    'hidden'           => false,
+                    'type'             => 'banner',
+                    'position'         => 'left',
+                    'logo'             => $siteLogo,
+                    'title'            => 'Welcome to ' . $siteTitle,
+                    'description'      => $tagLine,
+                    'title_color'      => '#19283a',
+                    'text_color'       => '#525866',
+                    'background_image' => '',
+                    'background_color' => '#F5F7FA',
+                ],
+                'form'   => [
+                    'type'               => 'form',
+                    'position'           => 'right',
+                    'title'              => 'Sign Up to ' . $siteTitle,
+                    'description'        => 'Please enter your details to register',
+                    'button_label'       => 'Sign up',
+                    'terms_label'        => '',
+                    'title_color'        => '#19283a',
+                    'text_color'         => '#525866',
+                    'button_color'       => '#2B2E33',
+                    'button_label_color' => '#ffffff',
+                    'background_image'   => '',
+                    'background_color'   => '#ffffff',
+                ]
+            ]
+        ];
+
+        $settings = get_option('__fls_auth_customizer_settings', []);
+
+        if (!$settings) {
+            return $defaults;
+        }
+
+        $settings = wp_parse_args($settings, $defaults);
+
+        return $settings;
+    }
+
+
+    public static function formatAuthCustomizerSettings($settingFields)
+    {
+        $textFields = ['type', 'title', 'button_label', 'position', 'title_color', 'text_color', 'button_color', 'button_label_color', 'background_color'];
+        $mediaFields = ['logo', 'background_image'];
+
+        $formattedFields = [];
+        foreach ($settingFields as $section => $settings) {
+            if(is_string($settings)) {
+                $formattedFields[$section] = sanitize_text_field($settings);
+                continue;
+            }
+
+            foreach ($settings as $key => $setting) {
+                $textValues = array_map('sanitize_text_field', Arr::only($setting, $textFields));
+                $mediaUrls = array_map('sanitize_url', Arr::only($setting, $mediaFields));
+                $formattedField = array_merge($textValues, $mediaUrls);
+                $formattedField['description'] = wp_kses_post(Arr::get($setting, 'description'));
+                $formattedField['hidden'] = Arr::isTrue($setting, 'hidden');
+                $formattedFields[$section][$key] = $formattedField;
+            }
+        }
+
+        return $formattedFields;
     }
 }

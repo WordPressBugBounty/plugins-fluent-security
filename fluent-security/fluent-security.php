@@ -5,7 +5,7 @@ defined('ABSPATH') or die;
 Plugin Name:  FluentAuth - Auth Security Plugin
 Plugin URI:   https://fluentauth.com
 Description:  Super Simple Login / Signup Security and Social Login Plugin for WordPress
-Version:      1.1.0
+Version:      2.0.0
 Author:       Fluent Auth Team
 Author URI:   https://fluentauth.com
 License:      GPLv2 or later
@@ -14,13 +14,14 @@ Text Domain:  fluent-security
 Domain Path:  /language/
 */
 
-if(defined('FLUENT_AUTH_VERSION')) {
+
+if (defined('FLUENT_AUTH_VERSION')) {
     return;
 }
 
 define('FLUENT_AUTH_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('FLUENT_AUTH_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('FLUENT_AUTH_VERSION', '1.1.0');
+define('FLUENT_AUTH_VERSION', '2.0.0');
 
 class FluentAuthPlugin
 {
@@ -45,12 +46,12 @@ class FluentAuthPlugin
     public function deactivatePlugin()
     {
         wp_clear_scheduled_hook('fluent_auth_daily_tasks');
+        wp_clear_scheduled_hook('fluent_auth_hourly_tasks');
     }
 
     private function autoLoad()
     {
-
-        spl_autoload_register(function($class) {
+        spl_autoload_register(function ($class) {
             $match = 'FluentAuth';
 
             if (!preg_match("/\b{$match}\b/", $class)) {
