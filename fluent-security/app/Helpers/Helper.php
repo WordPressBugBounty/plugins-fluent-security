@@ -58,7 +58,7 @@ class Helper
     public static function getUserRoles($keyed = false)
     {
         if (!function_exists('get_editable_roles')) {
-            require_once(ABSPATH . '/wp-admin/includes/user.php');
+            require_once(ABSPATH . 'wp-admin/includes/user.php');
         }
 
         $roles = \get_editable_roles();
@@ -79,7 +79,7 @@ class Helper
     public static function getLowLevelRoles()
     {
         if (!function_exists('get_editable_roles')) {
-            require_once(ABSPATH . '/wp-admin/includes/user.php');
+            require_once(ABSPATH . 'wp-admin/includes/user.php');
         }
 
         $roles = \get_editable_roles();
@@ -99,7 +99,7 @@ class Helper
     {
         $allCaps = [];
         if (!function_exists('get_editable_roles')) {
-            require_once(ABSPATH . '/wp-admin/includes/user.php');
+            require_once(ABSPATH . 'wp-admin/includes/user.php');
         }
 
         $roles = \get_editable_roles();
@@ -241,6 +241,7 @@ class Helper
             'enable_google'          => 'no',
             'google_key_method'      => 'wp_config',
             'google_client_id'       => '',
+            'google_one_tap'         => 'no',
             'google_client_secret'   => '',
             'enable_github'          => 'no',
             'github_key_method'      => 'wp_config',
@@ -374,6 +375,7 @@ class Helper
                 #$netmask_dec = bindec(str_pad('', $netmask, '1') . str_pad('', 32-$netmask, '0'));
 
                 # Strategy 2 - Use math to create it
+                /** @phpstan-ignore binaryOp.invalid */
                 $wildcard_dec = pow(2, (32 - $netmask)) - 1;
                 $netmask_dec = ~$wildcard_dec;
 
@@ -508,7 +510,7 @@ class Helper
     {
         $validated = wp_validate_redirect($location, $fallback);
 
-        if($validated !== $location) {
+        if ($validated !== $location) {
             return apply_filters('fluent_auth/validated_redirect', $validated, $location, $fallback);
         }
 

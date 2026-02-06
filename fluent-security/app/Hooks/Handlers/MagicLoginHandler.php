@@ -2,7 +2,10 @@
 
 namespace FluentAuth\App\Hooks\Handlers;
 
+use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
+use FluentAuth\App\Services\SmartCodeParser;
+use FluentAuth\App\Services\SystemEmailService;
 
 class MagicLoginHandler
 {
@@ -82,42 +85,42 @@ class MagicLoginHandler
             <div class="fls_magic_initial">
                 <div class="fls_or_wrap">
                     <div class="fls_magic-or">
-                        <span><?php _e('Or', 'fluent-security') ?></span>
+                        <span><?php esc_html_e('Or', 'fluent-security') ?></span>
                     </div>
                 </div>
 
                 <div class="fls_magic_login_btn">
                     <button class="fls_magic_show_btn magic_btn_secondary button button-primary button-large">
-                        <?php _e('Login Via Magic URL', 'fluent-security'); ?>
+                        <?php esc_html_e('Login Via Magic URL', 'fluent-security'); ?>
                     </button>
                 </div>
             </div>
             <div style="display: none" class="fls_magic_login_form">
                 <p class="fls_magic_text">
-                    <?php _e('Enter the email address or username associated with your account, and we\'ll send a magic link to your inbox.', 'fluent-security'); ?>
+                    <?php esc_html_e('Enter the email address or username associated with your account, and we\'ll send a magic link to your inbox.', 'fluent-security'); ?>
                 </p>
                 <label for="fls_magic_logon">
-                    <?php _e('Your Email/Username', 'fluent-security'); ?>
+                    <?php esc_html_e('Your Email/Username', 'fluent-security'); ?>
                 </label>
-                <input placeholder="<?php _e('Your Email/Username', 'fluent-security'); ?>" id="fls_magic_logon"
+                <input placeholder="<?php esc_html_e('Your Email/Username', 'fluent-security'); ?>" id="fls_magic_logon"
                        class="fls_magic_input" type="text" name="fls_magic_logon_email"/>
                 <input id="fls_magic_logon_nonce" type="hidden" name="fls_magic_logon_nonce"
-                       value="<?php echo wp_create_nonce('fls_magic_logon_nonce'); ?>"/>
+                       value="<?php echo esc_attr(wp_create_nonce('fls_magic_logon_nonce')); ?>"/>
                 <div class="fls_magic_submit_wrapper">
                     <button class="button button-primary button-large" id="fls_magic_submit">
-                        <?php _e('Continue', 'fluent-security'); ?>
+                        <?php esc_html_e('Continue', 'fluent-security'); ?>
                     </button>
                 </div>
 
                 <div class="magic_back_regular">
                     <div class="fls_or_wrap">
                         <div class="fls_magic-or">
-                            <span><?php _e('Or', 'fluent-security') ?></span>
+                            <span><?php esc_html_e('Or', 'fluent-security') ?></span>
                         </div>
                     </div>
                     <div class="fls_magic_login_back">
                         <button class="fls_magic_show_regular magic_btn_secondary">
-                            <?php _e('Use Regular Login form', 'fluent-security'); ?>
+                            <?php esc_html_e('Use Regular Login form', 'fluent-security'); ?>
                         </button>
                     </div>
                 </div>
@@ -183,6 +186,7 @@ class MagicLoginHandler
 
         if ($existingCount > $loginLimit) {
             wp_send_json([
+                /* translators: %d: Minite  */
                 'message' => sprintf(__('You are trying too much. Please try after %d minutes', 'fluent-security'), $timingMinutes)
             ], 422);
         }
@@ -210,8 +214,15 @@ class MagicLoginHandler
         $canUseMagicLogin = apply_filters('fluent_auth/magic_login_can_use', $this->canUseMagic($user), $user);
 
         if (!$canUseMagicLogin) {
+
+            $error_message = apply_filters(
+                'fluent_auth/magic_login_error_message',
+                __('Sorry, You can not login via magic url. Please use regular login form', 'fluent-security'),
+                $user
+            );
+
             wp_send_json(array(
-                'message' => __('Sorry, You can not login via magic url. Please use regular login form', 'fluent-security')
+                'message' => $error_message
             ), 422);
         }
 
@@ -226,49 +237,62 @@ class MagicLoginHandler
 
         $loginUrl = esc_url($this->getMagicLoginUrl($user, $validity, false, $redirect_to));
 
-        $emailSubject = sprintf(__('Sign in to %s', 'fluent-security'), get_bloginfo('name'));
 
-        $emailLines = [
-            sprintf(__('Hello %s,', 'fluent-security'), $user->display_name),
-            sprintf(__('Click the link below to sign in to your %s account', 'fluent-security'), get_bloginfo('name')),
-            sprintf(__('This link will expire in %d minutes and can only be used once.', 'fluent-security'), $validity)
-        ];
+        $emailData = $this->getCustomizedEmailSubjectBody($user, $loginUrl);
+        if (empty($emailData['subject']) || empty($emailData['body'])) {
+            /* translators: %s: Site Name  */
+            $emailSubject = sprintf(__('Sign in to %s', 'fluent-security'), get_bloginfo('name'));
 
-        $callToAction = [
-            'btn_text' => sprintf(__('Sign in to %s', 'fluent-security'), get_bloginfo('name')),
-            'url'      => $loginUrl
-        ];
+            $emailLines = [
+                /* translators: %s: user's display name  */
+                sprintf(__('Hello %s,', 'fluent-security'), $user->display_name),
+                /* translators: %s: Site Name  */
+                sprintf(__('Click the link below to sign in to your %s account', 'fluent-security'), get_bloginfo('name')),
+                /* translators: %d: Minute  */
+                sprintf(__('This link will expire in %d minutes and can only be used once.', 'fluent-security'), $validity)
+            ];
 
-        $footerLines = [
-            __('If the button above does not work, paste this link into your web browser:', 'fluent-security'),
-            esc_url($loginUrl),
-            ' ',
-            __('If you did not make this request, you can safely ignore this email.', 'fluent-security')
-        ];
+            $callToAction = [
+                /* translators: %s: Site Name  */
+                'btn_text' => sprintf(__('Sign in to %s', 'fluent-security'), get_bloginfo('name')),
+                'url'      => $loginUrl
+            ];
 
-        $emailBody = '';
-        $emailBody .= Helper::loadView('magic_login.header', [
-            'pre_header' => $emailSubject
-        ]);
+            $footerLines = [
+                __('If the button above does not work, paste this link into your web browser:', 'fluent-security'),
+                esc_url($loginUrl),
+                ' ',
+                __('If you did not make this request, you can safely ignore this email.', 'fluent-security')
+            ];
 
-        $emailBody .= Helper::loadView('magic_login.line_block', [
-            'lines' => $emailLines
-        ]);
+            $emailBody = '';
+            $emailBody .= Helper::loadView('magic_login.header', [
+                'pre_header' => $emailSubject
+            ]);
 
-        $emailBody .= Helper::loadView('magic_login.call_to_action', $callToAction);
+            $emailBody .= Helper::loadView('magic_login.line_block', [
+                'lines' => $emailLines
+            ]);
 
-        $emailBody .= Helper::loadView('magic_login.line_block', [
-            'lines' => $footerLines
-        ]);
+            $emailBody .= Helper::loadView('magic_login.call_to_action', $callToAction);
 
-        $emailBody .= Helper::loadView('magic_login.footer', []);
+            $emailBody .= Helper::loadView('magic_login.line_block', [
+                'lines' => $footerLines
+            ]);
 
-        $result = \wp_mail($user->user_email, $emailSubject, $emailBody, array(
+            $emailBody .= Helper::loadView('magic_login.footer', []);
+
+            $emailData['subject'] = $emailSubject;
+            $emailData['body'] = $emailBody;
+        }
+
+        $result = \wp_mail($user->user_email, $emailData['subject'], $emailData['body'], array(
             'Content-Type: text/html; charset=UTF-8'
         ));
 
         $message = __('We just emailed a login link to your registered email. Click the link to sign in.', 'fluent-security');
         if (is_email($username)) {
+            /* translators: %s: User Email  */
             $message = sprintf(__('We just emailed a magic link to %s. Click the link to sign in.', 'fluent-security'), $user->user_email);
         }
 
@@ -278,6 +302,40 @@ class MagicLoginHandler
             'message' => $message
         ], 200);
     }
+
+    private function getCustomizedEmailSubjectBody($user, $autoLoginUrl = '')
+    {
+        $customSetting = SystemEmailService::getEmailSettingsByType('magic_email_to_user');
+
+        if (Arr::get($customSetting, 'status', '') !== 'active' || !$autoLoginUrl) {
+            return [
+                'subject' => '',
+                'body'    => ''
+            ];
+        }
+
+        $subject = Arr::get($customSetting, 'email.subject', '');
+        $body = Arr::get($customSetting, 'email.body', '');
+
+        $replaces = [
+            '##user.secure_signin_url##' => $autoLoginUrl,
+            '{{user.secure_signin_url}}' => $autoLoginUrl,
+        ];
+
+        $subject = strtr($subject, $replaces);
+        $body = strtr($body, $replaces);
+
+        $body = SystemEmailService::withHtmlTemplate($body, null, $user);
+
+        $body = (new SmartCodeParser())->parse($body, $user);
+        $subject = (new SmartCodeParser())->parse($subject, $user);
+
+        return [
+            'subject' => $subject,
+            'body'    => $body
+        ];
+    }
+
 
     private function getMagicLoginUrl($user, $validity = 5, $baseUrl = false, $redirectIntend = '')
     {
@@ -375,8 +433,8 @@ class MagicLoginHandler
             flsDb()->table('fls_login_hashes')
                 ->where('id', $row->id)
                 ->update([
-                    'status'    => 'expired',
-                    'update_at' => current_time('mysql')
+                    'status'     => 'expired',
+                    'updated_at' => current_time('mysql')
                 ]);
             return false;
         }
@@ -397,11 +455,14 @@ class MagicLoginHandler
                 'user_password' => ''
             )
         );
-        remove_filter('authenticate', array($this, 'allowProgrammaticLogin'), 10, 3);
+        remove_filter('authenticate', array($this, 'allowProgrammaticLogin'), 10);
 
         if ($user instanceof \WP_User) {
             wp_set_current_user($user->ID, $user->user_login);
-            if (is_user_logged_in()) {
+
+            $user = wp_get_current_user();
+
+            if ($user && $user->exists()) {
                 flsDb()->table('fls_login_hashes')
                     ->where('id', $row->id)
                     ->update([

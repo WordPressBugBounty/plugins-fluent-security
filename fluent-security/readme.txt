@@ -2,9 +2,9 @@
 Contributors: techjewel, wpmanageninja, adreastrian
 Tags: Login limit, login redirects, xml-rpc, login logs, social logins
 Requires at least: 5.0
-Tested up to: 6.8
+Tested up to: 6.9
 Requires PHP: 7.3
-Stable tag: 2.0.2
+Stable tag: 2.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,6 +26,11 @@ Boost Your Website's Security with Login/Signup Security, Two-Factor Email Authe
 - Security Email Notifications
 - Super Fast Solution
 - Restrict /wp-admin for low level user roles
+
+**What's new in version 2.0**
+
+[youtube https://www.youtube.com/watch?v=P_vREW7s2B4]
+
 
 [youtube https://www.youtube.com/watch?v=5t_8rvtrkk4]
 
@@ -121,6 +126,7 @@ FluentAuth has been designed to provide light-weight security solution while add
 
 == Other Plugins By The Same Team ==
 <ul>
+	<li><a href="https://wordpress.org/plugins/fluent-cart/" target="_blank">FluentCart A New Era of eCommerce – Faster, Lighter, and Simpler</a></li>
 	<li><a href="https://wordpress.org/plugins/fluent-crm/" target="_blank">FluentCRM – Email Marketing, Newsletter, Email Automation and CRM Plugin for WordPress</a></li>
 	<li><a href="https://wordpress.org/plugins/fluentform/" target="_blank">Fluent Forms – Fastest WordPress Form Builder Plugin</a></li>
 	<li><a href="https://wordpress.org/plugins/ninja-tables/" target="_blank">Ninja Tables – Best WP DataTables Plugin for WordPress</a></li>
@@ -172,6 +178,16 @@ Absolutely not! From the very first, We were careful about this. It stores all t
 10. WordPress Core Files Integrity Check
 
 == Changelog ==
+
+= 2.1.1 - Date: Dec 03, 2025 =
+* Introducing One-Tap Login via Google Social Auth Connection
+* Improved Translation & Localization
+* Security: Improved Data Security and Sanitization and compitable with latest WordPress security standards
+* Bug Fixes and Performance Improvements
+
+= 2.0.3 - Date: Jun 11, 2025 =
+* Typo and Smartcode fixed on Custom Emails
+* WP_Error Notice fixed
 
 = 2.0.2 - Date: Jun 11, 2025 =
 * Fixed: Login Redirect Issue

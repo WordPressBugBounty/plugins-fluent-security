@@ -4,6 +4,8 @@ namespace FluentAuth\App\Hooks\Handlers;
 
 use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
+use FluentAuth\App\Services\SmartCodeParser;
+use FluentAuth\App\Services\SystemEmailService;
 
 class TwoFaHandler
 {
@@ -44,7 +46,7 @@ class TwoFaHandler
             return;
         }
 
-        login_header(__('Provide Login Code'), '', false);
+        login_header(__('Provide Login Code', 'fluent-security'), '', null);
         do_action('fls_load_login_helper');
         echo $this->get2FaFormHtml($_REQUEST); // PHPCS:Ignore WordPress.Security.EscapeOutput.OutputNotEscaped
         login_footer();
@@ -72,7 +74,7 @@ class TwoFaHandler
             ]);
         }
 
-        wp_redirect($return['redirect_to']);
+        wp_safe_redirect($return['redirect_to']);
         exit();
     }
 
@@ -83,10 +85,12 @@ class TwoFaHandler
         }
 
         try {
-            $twoFaCode = str_pad(random_int(100123, 900987), 6, 0, STR_PAD_LEFT);
+            $twoFaCode = random_int(100123, 900987);
         } catch (\Exception $e) {
-            $twoFaCode = str_pad(mt_rand(100123, 900987), 6, 0, STR_PAD_LEFT);
+            $twoFaCode = mt_rand(100123, 900987);
         }
+
+        $twoFaCode = (string)$twoFaCode;
 
         $string = $user->ID . '-' . wp_generate_uuid4() . mt_rand(1, 99999999);
         $hash = wp_hash_password($string);
@@ -95,7 +99,7 @@ class TwoFaHandler
 
         $redirectIntend = '';
         if (isset($_REQUEST['redirect_to'])) {
-            $redirectIntend = esc_url($_GET['redirect_to']);
+            $redirectIntend = esc_url($_REQUEST['redirect_to']);
         }
 
         if (isset($_REQUEST['rememberme'])) {
@@ -128,6 +132,8 @@ class TwoFaHandler
         $data['two_fa_code'] = $twoFaCode;
 
         $this->send2FaEmail($data, $user, $autoLoginUrl);
+
+        do_action('fls_send_2fa_code', $data, $user, $autoLoginUrl);
 
         if ($return === 'url') {
             return add_query_arg([
@@ -200,13 +206,13 @@ class TwoFaHandler
 
         add_filter('authenticate', array($this, 'allowProgrammaticLogin'), 10, 3);    // hook in earlier than other callbacks to short-circuit them
         $user = wp_signon(array(
-                'user_login' => $user->user_login,
+                'user_login'    => $user->user_login,
                 'user_password' => '',
-                'remember'   => (bool) strpos($logHash->login_hash, '-auth')
+                'remember'      => (bool)strpos($logHash->login_hash, '-auth')
             )
         );
 
-        remove_filter('authenticate', array($this, 'allowProgrammaticLogin'), 10, 3);
+        remove_filter('authenticate', array($this, 'allowProgrammaticLogin'), 10);
 
         if ($user instanceof \WP_User) {
             wp_set_current_user($user->ID, $user->user_login);
@@ -241,58 +247,110 @@ class TwoFaHandler
 
     private function send2FaEmail($data, $user, $autoLoginUrl = false)
     {
-        $blogName = html_entity_decode(get_bloginfo('name'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $emailSubject = sprintf(__('Your Login code for %1s - %d', 'fluent-security'), $blogName, $data['two_fa_code']);
 
-        $emailLines = [
-            sprintf(__('Hello %s,', 'fluent-security'), $user->display_name),
-            sprintf(__('Someone requested to login to %s and here is the Login code that you can use in the login form', 'fluent-security'), $blogName),
-            '<b>' . __('Your Login Code: ', 'fluent-security') . '</b>',
-            '<p style="font-size: 22px;border: 2px dashed #555454;padding: 5px 10px;text-align: center;background: #fffaca;letter-spacing: 7px;color: #555454;display:block;">' . $data['two_fa_code'] . '</p>',
-            sprintf(__('This code will expire in %d minutes and can only be used once.', 'fluent-security'), 10),
-            ' ',
-            '<hr />'
-        ];
+        $emailData = $this->getCustomizedEmailSubjectBody($data, $user, $autoLoginUrl);
 
-        $callToAction = false;
+        if (empty($emailData['subject']) || empty($emailData['body'])) {
+            $blogName = html_entity_decode(get_bloginfo('name'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-        if ($autoLoginUrl) {
-            $emailLines[] = ' ';
-            $emailLines[] = __('You can also login by clicking the following button', 'fluent-security');
-            $callToAction = [
-                'btn_text' => sprintf(__('Sign in to %s', 'fluent-security'), $blogName),
-                'url'      => $autoLoginUrl
+            /* translators: %1$1s: Site Name, %2$d: verification code */
+            $emailSubject = sprintf(__('Your Login code for %1$1s - %2$d', 'fluent-security'), $blogName, $data['two_fa_code']);
+
+            $emailLines = [
+                /* translators: %s: User's Display Name  */
+                sprintf(__('Hello %s,', 'fluent-security'), $user->display_name),
+                /* translators: %s: Site Name  */
+                sprintf(__('Someone requested to login to %s and here is the Login code that you can use in the login form', 'fluent-security'), $blogName),
+                '<b>' . __('Your Login Code: ', 'fluent-security') . '</b>',
+                '<p style="font-size: 22px;border: 2px dashed #555454;padding: 5px 10px;text-align: center;background: #fffaca;letter-spacing: 7px;color: #555454;display:block;">' . $data['two_fa_code'] . '</p>',
+                /* translators: %d: Minute  */
+                sprintf(__('This code will expire in %d minutes and can only be used once.', 'fluent-security'), 10),
+                ' ',
+                '<hr />'
+            ];
+
+            $callToAction = false;
+
+            if ($autoLoginUrl) {
+                $emailLines[] = ' ';
+                $emailLines[] = __('You can also login by clicking the following button', 'fluent-security');
+                $callToAction = [
+                    /* translators: %s: Site Name  */
+                    'btn_text' => sprintf(__('Sign in to %s', 'fluent-security'), $blogName),
+                    'url'      => $autoLoginUrl
+                ];
+            }
+
+            $footerLines = [
+                ' ',
+                __('If you did not make this request, you can safely ignore this email.', 'fluent-security')
+            ];
+
+            $emailBody = '';
+            $emailBody .= Helper::loadView('magic_login.header', [
+                'pre_header' => $emailSubject
+            ]);
+
+            $emailBody .= Helper::loadView('magic_login.line_block', [
+                'lines' => $emailLines
+            ]);
+
+            if ($callToAction) {
+                $emailBody .= Helper::loadView('magic_login.call_to_action', $callToAction);
+            }
+
+            $emailBody .= Helper::loadView('magic_login.line_block', [
+                'lines' => $footerLines
+            ]);
+
+            $emailBody .= Helper::loadView('magic_login.footer', []);
+
+            $emailData = [
+                'subject' => $emailSubject,
+                'body'    => $emailBody
             ];
         }
 
-
-        $footerLines = [
-            ' ',
-            __('If you did not make this request, you can safely ignore this email.', 'fluent-security')
-        ];
-
-        $emailBody = '';
-        $emailBody .= Helper::loadView('magic_login.header', [
-            'pre_header' => $emailSubject
-        ]);
-
-        $emailBody .= Helper::loadView('magic_login.line_block', [
-            'lines' => $emailLines
-        ]);
-
-        if ($callToAction) {
-            $emailBody .= Helper::loadView('magic_login.call_to_action', $callToAction);
-        }
-
-        $emailBody .= Helper::loadView('magic_login.line_block', [
-            'lines' => $footerLines
-        ]);
-
-        $emailBody .= Helper::loadView('magic_login.footer', []);
-
-        return \wp_mail($user->user_email, $emailSubject, $emailBody, array(
+        return \wp_mail($user->user_email, $emailData['subject'], $emailData['body'], array(
             'Content-Type: text/html; charset=UTF-8'
         ));
+    }
+
+
+    private function getCustomizedEmailSubjectBody($data, $user, $autoLoginUrl = false)
+    {
+        $customSetting = SystemEmailService::getEmailSettingsByType('two_fa_email_to_user');
+
+        if (Arr::get($customSetting, 'status', '') !== 'active') {
+            return [
+                'subject' => '',
+                'body'    => ''
+            ];
+        }
+
+        $subject = Arr::get($customSetting, 'email.subject', '');
+        $body = Arr::get($customSetting, 'email.body', '');
+
+
+        $replaces = [
+            '{{user.two_fa_code}}'  => $data['two_fa_code'],
+            '##user.two_fa_code##'  => $data['two_fa_code'],
+            '##user.secure_signin_url##' => $autoLoginUrl,
+            '{{user.secure_signin_url}}' => $autoLoginUrl,
+        ];
+
+        $subject = strtr($subject, $replaces);
+        $body = strtr($body, $replaces);
+
+        $body = SystemEmailService::withHtmlTemplate($body, null, $user);
+
+        $body = (new SmartCodeParser())->parse($body, $user);
+        $subject = (new SmartCodeParser())->parse($subject, $user);
+
+        return [
+            'subject' => $subject,
+            'body'    => $body
+        ];
     }
 
     public function allowProgrammaticLogin($user, $username, $password)
@@ -320,7 +378,7 @@ class TwoFaHandler
     {
         $redirectTo = Arr::get($data, 'redirect_to');
 
-        if($redirectTo) {
+        if ($redirectTo) {
             $redirectTo = esc_url_raw($redirectTo);
         }
 
@@ -332,11 +390,11 @@ class TwoFaHandler
             <input type="hidden" name="login_hash" value="<?php echo esc_attr(Arr::get($data, 'login_hash')); ?>"/>
             <input type="hidden" name="redirect_to" value="<?php echo esc_attr($redirectTo); ?>"/>
             <div class="user-pass-wrap">
-                <p style="margin-bottom: 20px;"><?php _e('Please check your email inbox and get the 2 factor Authentication code and Provide here to login', 'fluent-security'); ?></p>
-                <label for="login_passcode"><?php _e('Two-Factor Authentication Code', 'fluent-security'); ?></label>
+                <p style="margin-bottom: 20px;"><?php esc_html_e('Please check your email inbox and get the 2 factor Authentication code and Provide here to login', 'fluent-security'); ?></p>
+                <label for="login_passcode"><?php esc_html_e('Two-Factor Authentication Code', 'fluent-security'); ?></label>
                 <div class="wp-pwd">
-                    <input style="font-size: 14px;" placeholder="<?php _e('Login Code', 'fluent-security'); ?>"
-                           type="text"
+                    <input style="font-size: 14px;" placeholder="<?php esc_html_e('Login Code', 'fluent-security'); ?>"
+                           type="number"
                            value="<?php echo (isset($data['auto_code'])) ? esc_attr($data['auto_code']) : ''; ?>"
                            name="login_passcode" id="login_passcode" class="input" size="20"/>
                 </div>
@@ -344,7 +402,7 @@ class TwoFaHandler
                     <button
                         style="display: block; cursor: pointer; width: 100%;border: 1px solid #2271b1;background: #2271b1;color: #fff;text-decoration: none;text-shadow: none;min-height: 32px;line-height: 2.30769231;padding: 4px 12px;font-size: 13px;border-radius: 3px;"
                         id="fls_2fa_confirm" type="submit">
-                        <?php _e('Login', 'fluent-security'); ?>
+                        <?php esc_html_e('Login', 'fluent-security'); ?>
                     </button>
                 </div>
             </div>
