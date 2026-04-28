@@ -101,7 +101,7 @@ class SecurityScanController
     public static function scanSite(\WP_REST_Request $request)
     {
         $settings = IntegrityHelper::getSettings();
-        $settings['last_checked'] = date('Y-m-d H:i:s');
+        $settings['last_checked'] = current_time('mysql');
         $settings['is_ok'] = 'yes';
         IntegrityHelper::saveSettings($settings);
 
@@ -115,7 +115,7 @@ class SecurityScanController
         $activeChanges = $checkerService->getScanResults(true);
 
         $hasIssues = array_filter($activeChanges);
-        $settings['last_checked'] = date('Y-m-d H:i:s');
+        $settings['last_checked'] = current_time('mysql');
         if ($hasIssues) {
             $settings['is_ok'] = 'no';
         }
@@ -194,29 +194,49 @@ class SecurityScanController
         }
 
         if ($folder) {
+            // Allow nested paths for wp-admin/wp-includes, realpath() ensures containment
             $filePath = ABSPATH . $folder . '/' . $file;
-            if (realpath($filePath) != $filePath) {
-                return new \WP_Error('invalid_data', __('This file could not be viewed for security reason.', 'fluent-security'), ['status' => 400, 'data' => $file]);
-            }
+            $expectedDir = realpath(ABSPATH . $folder);
         } else {
-            $ignoredFiles = [
-                '.git',
-                '.gitignore',
-                '.DS_Store',
-                '.idea',
-                'wp-admin',
-                'wp-includes',
-                'wp-config.php',
-                'wp-config-sample.php',
-                '.htaccess',
-            ];
-
+            // Root folder: strip directory components to prevent traversal
             $file = basename($file);
+            $filePath = ABSPATH . $file;
+            $expectedDir = realpath(ABSPATH);
+        }
 
-            if (in_array($file, $ignoredFiles)) {
+        $realPath = realpath($filePath);
+
+        if (!$realPath || !$expectedDir || strpos($realPath, $expectedDir . DIRECTORY_SEPARATOR) !== 0) {
+            return new \WP_Error('invalid_data', __('This file could not be viewed for security reason.', 'fluent-security'), ['status' => 400, 'data' => $file]);
+        }
+
+        $sensitivePatterns = [
+            'wp-config',
+            '.htaccess',
+            '.env',
+            'debug.log',
+            'error_log',
+            'php_errorlog',
+            '.user.ini',
+            '.php.ini',
+            'php.ini',
+            '.ftpconfig',
+            '.ssh',
+        ];
+
+        $backupExtensions = ['.bak', '.back', '.backup', '.old', '.orig', '.save', '.swp', '.tmp', '.copy', '~'];
+
+        $fileLower = strtolower($file);
+        foreach ($sensitivePatterns as $pattern) {
+            if (strpos($fileLower, $pattern) !== false) {
                 return new \WP_Error('invalid_data', __('This file could not be viewed.', 'fluent-security'), ['status' => 400, 'data' => $file]);
             }
-            $filePath = ABSPATH . $file;
+        }
+
+        foreach ($backupExtensions as $ext) {
+            if (substr($fileLower, -strlen($ext)) === $ext) {
+                return new \WP_Error('invalid_data', __('This file could not be viewed.', 'fluent-security'), ['status' => 400, 'data' => $file]);
+            }
         }
 
         if (!file_exists($filePath)) {

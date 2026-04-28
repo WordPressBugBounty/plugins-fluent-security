@@ -5,13 +5,23 @@ namespace FluentAuth\App\Helpers;
 class Helper
 {
     private static $loginMedia = 'web';
+    private static $authSettings = null;
+    private static $socialAuthSettings = null;
+
+    public static function resetStatics()
+    {
+        self::$authSettings = null;
+        self::$socialAuthSettings = null;
+        self::$loginMedia = 'web';
+    }
 
     public static function getAuthSettings()
     {
-        static $settings;
-        if ($settings) {
-            return $settings;
+        if (self::$authSettings) {
+            return self::$authSettings;
         }
+
+        $settings = &self::$authSettings;
 
         $defaults = [
             'disable_xmlrpc'          => 'no',
@@ -189,11 +199,16 @@ class Helper
         extract($data, EXTR_OVERWRITE);
 
         $template = sanitize_file_name($template);
-
         $template = str_replace('.', DIRECTORY_SEPARATOR, $template);
 
+        $path = FLUENT_AUTH_PLUGIN_PATH . 'app/Views/' . $template . '.php';
+
+        if (!file_exists($path)) {
+            return '';
+        }
+
         ob_start();
-        include FLUENT_AUTH_PLUGIN_PATH . 'app/Views/' . $template . '.php';
+        include $path;
         return ob_get_clean();
     }
 
@@ -231,10 +246,11 @@ class Helper
 
     public static function getSocialAuthSettings($context = 'view')
     {
-        static $settings;
-        if ($settings) {
-            return $settings;
+        if (self::$socialAuthSettings) {
+            return self::$socialAuthSettings;
         }
+
+        $settings = &self::$socialAuthSettings;
 
         $defaults = [
             'enabled'                => 'no',

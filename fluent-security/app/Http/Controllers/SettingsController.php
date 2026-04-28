@@ -203,13 +203,12 @@ class SettingsController
             'gif'          => 'image/gif',
             'webp'         => 'image/webp',
             'bmp'          => 'image/bmp',
-            'svg'          => 'image/svg+xml',
         ];
 
         if (!in_array($type, $allowed_mimes, true)) {
             return new \WP_Error(
                 'invalid_file_type',
-                __('Sorry, you can only upload JPG, PNG, GIF, WebP, BMP or SVG files.', 'fluent-security')
+                __('Sorry, you can only upload JPG, PNG, GIF, WebP or BMP files.', 'fluent-security')
             );
         }
 
@@ -344,7 +343,6 @@ class SettingsController
 
         return [
             'sites' => $formattedSites,
-            'raw'   => $sites
         ];
     }
 
@@ -357,6 +355,10 @@ class SettingsController
             'site_id'      => $request->get_param('site_id'),
         ];
 
+        if (!is_string($data['user_token']) || !is_string($data['server_token']) || !is_string($data['site_id'])) {
+            return new \WP_Error('invalid_request', __('Invalid request', 'fluent-security'));
+        }
+
         if (empty($data['user_token']) || empty($data['server_token']) || empty($data['site_id'])) {
             return new \WP_Error('invalid_request', __('Invalid request', 'fluent-security'));
         }
@@ -367,7 +369,7 @@ class SettingsController
             return new \WP_Error('invalid_request', __('Invalid Site ID', 'fluent-security'));
         }
 
-        if ($site['secret_key'] !== $data['server_token']) {
+        if (!hash_equals($site['secret_key'], $data['server_token'])) {
             return new \WP_Error('invalid_request', __('Invalid server token', 'fluent-security'));
         }
 
@@ -382,11 +384,11 @@ class SettingsController
         $user = get_user_by('ID', $userId);
         $userMeta = get_user_meta($userId, '__flsc_temp_token', true);
 
-        if (empty($user) || empty($userMeta) || $userMeta !== $data['user_token']) {
+        if (empty($user) || empty($userMeta) || !hash_equals($userMeta, $data['user_token'])) {
             return new \WP_Error('invalid_request', __('Invalid user token', 'fluent-security'));
         }
 
-        //   update_user_meta($userId, '__flsc_temp_token', '', true);// we are making it empty to avoid re-login
+        update_user_meta($userId, '__flsc_temp_token', '');
 
         // now we will prepare the data for the user
         $data = apply_filters('fluent_auth/remote_auth_response_data', [
@@ -500,6 +502,10 @@ class SettingsController
 
                     if (is_wp_error($plugin_information)) {
                         throw new \Exception($plugin_information->get_error_message());
+                    }
+
+                    if (!is_object($plugin_information) || empty($plugin_information->download_link)) {
+                        throw new \Exception(__('Could not retrieve plugin download link.', 'fluent-security'));
                     }
 
                     $package = $plugin_information->download_link;

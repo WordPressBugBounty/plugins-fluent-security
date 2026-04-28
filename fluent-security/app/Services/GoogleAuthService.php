@@ -95,23 +95,25 @@ class GoogleAuthService
 
     public static function getDataByIdToken($token)
     {
-        $tokenParts = explode(".", $token);
-        $tokenPayload = base64_decode($tokenParts[1]);
-        $jwtPayload = json_decode($tokenPayload, true);
+        $verifiedData = self::verifyClientToken($token);
 
-        if (empty($jwtPayload['email'])) {
+        if (is_wp_error($verifiedData)) {
+            return $verifiedData;
+        }
+
+        if (empty($verifiedData['email'])) {
             return new \WP_Error('payload_error', __('Sorry! There has an error when fetching data for google authentication. Please try again', 'fluent-security'));
         }
 
-        $username = Arr::get($jwtPayload, 'email');
+        $username = Arr::get($verifiedData, 'email');
         $emailArray = explode('@', $username);
         if (count($emailArray)) {
             $username = $emailArray[0];
         }
 
         return [
-            'full_name' => Arr::get($jwtPayload, 'name'),
-            'email'     => Arr::get($jwtPayload, 'email'),
+            'full_name' => Arr::get($verifiedData, 'name'),
+            'email'     => Arr::get($verifiedData, 'email'),
             'username'  => $username
         ];
     }

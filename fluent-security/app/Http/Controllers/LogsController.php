@@ -8,17 +8,8 @@ class LogsController
 {
     public static function getLogs(\WP_REST_Request $request)
     {
-        if($orderByColumn = $request->get_param('sortBy')){
-            $orderByColumn = sanitize_sql_orderby($orderByColumn);
-        } else {
-            $orderByColumn = 'id';
-        }
-
-        if($orderBy = $request->get_param('sortType')){
-            $orderBy = sanitize_sql_orderby($orderBy);
-        } else {
-            $orderBy = 'DESC';
-        }
+        $orderByColumn = sanitize_sql_orderby($request->get_param('sortBy')) ?: 'id';
+        $orderBy = sanitize_sql_orderby($request->get_param('sortType')) ?: 'DESC';
 
         $query = flsDb()->table('fls_auth_logs')->orderBy($orderByColumn, $orderBy);
 
@@ -40,9 +31,9 @@ class LogsController
 
         $logs = $query->paginate();
 
-        $currentTimeStamp = current_time('timestamp');
+        $wpTimestamp = current_time('timestamp');
         foreach ($logs['data'] as $log) {
-            $log->human_time_diff = human_time_diff(strtotime($log->created_at, $currentTimeStamp), $currentTimeStamp) . ' ago';
+            $log->human_time_diff = human_time_diff(strtotime($log->created_at), $wpTimestamp) . ' ago';
         }
 
         return [
@@ -52,7 +43,7 @@ class LogsController
 
     public static function deleteLog(\WP_REST_Request $request)
     {
-        $id = $request->get_param('id');
+        $id = (int) $request->get_param('id');
         flsDb()->table('fls_auth_logs')->where('id', $id)->delete();
 
         return [
@@ -80,15 +71,17 @@ class LogsController
             $fromRange = '-0 days';
         }
 
+        $wpTimestamp = current_time('timestamp');
+
         if ($fromRange == 'this_month') {
-            $fromDate = date('Y-m-01 00:00:00');
+            $fromDate = date('Y-m-01 00:00:00', $wpTimestamp);
         } else if ($fromRange == 'all_time') {
             $fromDate = '1970-01-01 00:00:00';
         } else {
-            $fromDate = date('Y-m-d 00:00:00', strtotime($fromRange));
+            $fromDate = date('Y-m-d 00:00:00', strtotime($fromRange, $wpTimestamp));
         }
 
-        $toDate = date('Y-m-d 23:59:59', current_time('timestamp'));
+        $toDate = date('Y-m-d 23:59:59', $wpTimestamp);
 
         $counts = flsDb()->table('fls_auth_logs')
             ->select(['status', flsDb()->raw('count(*) as total')])

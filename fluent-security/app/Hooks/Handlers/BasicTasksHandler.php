@@ -17,9 +17,6 @@ class BasicTasksHandler
 
         // Maybe disable List Users REST
         add_filter('rest_user_query', [$this, 'maybeInterceptRestUserQuery']);
-
-        // Maybe disable List Users REST
-        add_filter('rest_user_query', [$this, 'maybeInterceptRestUserQuery']);
         add_filter('rest_prepare_user', [$this, 'maybeInterceptRestUserResponse'], 10, 3);
 
         add_action('admin_notices', [$this, 'maybeAddAdminNotice']);
@@ -255,7 +252,7 @@ class BasicTasksHandler
         $infoHtml .= '</ul>';
 
         $lines = [
-            sprintf('<p style="font-size: 16px; line-height: 25px;">Hello there, <br />Here is the %1s digest report of your site\'s (%2s) login activity.</p>', $period, site_url()),
+            sprintf('<p style="font-size: 16px; line-height: 25px;">Hello there, <br />Here is the %1$s digest report of your site\'s (%2$s) login activity.</p>', $period, site_url()),
             $infoHtml
         ];
 
@@ -266,7 +263,7 @@ class BasicTasksHandler
         ];
 
         $body = Helper::loadView('notification', $data);
-        $subject = sprintf('%1s report for %2s - %3s', ucfirst($period), get_bloginfo('name'), date('d, M Y', current_time('timestamp')));
+        $subject = sprintf('%1$s report for %2$s - %3$s', ucfirst($period), get_bloginfo('name'), date('d, M Y', current_time('timestamp')));
 
         $headers = array('Content-Type: text/html; charset=UTF-8');
 

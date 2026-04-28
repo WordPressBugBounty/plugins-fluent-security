@@ -52,11 +52,13 @@ class GithubAuthService
 
     public static function getDataByAccessToken($token)
     {
+        $headers = [
+            'Accept'        => 'application/json',
+            'Authorization' => 'Bearer ' . $token
+        ];
+
         $response = wp_remote_get('https://api.github.com/user', [
-            'headers' => [
-                'Accept'        => 'application/json',
-                'Authorization' => 'Bearer ' . $token
-            ]
+            'headers' => $headers
         ]);
 
         if(is_wp_error($response)) {
@@ -70,13 +72,46 @@ class GithubAuthService
             return new \WP_Error('api_error', __('API Error when authenticate via github', 'fluent-security'));
         }
 
+        $email = Arr::get($data, 'email');
+
+        // The /user endpoint returns null for email when the user has it set to private.
+        // Fetch from /user/emails to get the primary verified email.
+        if (empty($email)) {
+            $email = self::getPrimaryEmail($headers);
+        }
+
         return [
             'full_name' => Arr::get($data, 'name'),
             'user_url' => Arr::get($data, 'blog'),
-            'email' => Arr::get($data, 'email'),
+            'email' => $email,
             'username' => Arr::get($data, 'login'),
             'description' => Arr::get($data, 'bio')
         ];
+    }
+
+    private static function getPrimaryEmail($headers)
+    {
+        $response = wp_remote_get('https://api.github.com/user/emails', [
+            'headers' => $headers
+        ]);
+
+        if (is_wp_error($response)) {
+            return '';
+        }
+
+        $emails = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (!is_array($emails)) {
+            return '';
+        }
+
+        foreach ($emails as $entry) {
+            if (!empty($entry['primary']) && !empty($entry['verified'])) {
+                return Arr::get($entry, 'email', '');
+            }
+        }
+
+        return '';
     }
 
     public static function getAppRedirect()

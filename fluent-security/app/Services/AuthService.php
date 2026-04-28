@@ -105,7 +105,7 @@ class AuthService
             }
         }
 
-        if (!empty($userData)) {
+        if (!empty($updateData)) {
             $updateData['ID'] = $user->ID;
             wp_update_user($updateData);
         }
@@ -121,10 +121,14 @@ class AuthService
             return new \WP_Error('user_not_found', __('User not found', 'fluent-security'));
         }
 
-        $canLogin = apply_filters('fluent_auth/can_user_login', false, $user, $provider);
+        $canLogin = apply_filters('fluent_auth/can_user_login', true, $user, $provider);
 
         if ($provider && is_wp_error($canLogin)) {
             return $canLogin;
+        }
+
+        if (!$canLogin) {
+            return new \WP_Error('login_denied', __('You are not allowed to login.', 'fluent-security'));
         }
 
         wp_clear_auth_cookie();

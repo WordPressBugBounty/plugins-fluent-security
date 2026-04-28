@@ -177,7 +177,7 @@ class MagicLoginHandler
         $loginLimit = Helper::getSetting('login_try_limit', 5);
         $timingMinutes = Helper::getSetting('login_try_timing', 30);
 
-        $dateTime = date('Y-m-d H:i:s', current_time('timestamp') - $timingMinutes * 86400);
+        $dateTime = date('Y-m-d H:i:s', current_time('timestamp') - $timingMinutes * 60);
 
         $existingCount = flsDb()->table('fls_login_hashes')
             ->where('ip_address', Helper::getIp())
