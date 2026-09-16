@@ -238,7 +238,7 @@ class GoogleOneTapAuthHandler
         ]);
 
         wp_localize_script('fluent-auth-google-one-tap', 'fluentOneTapConfig', [
-            'type'      => $args['type'],
+            'mode'      => $args['type'],
             'delay'     => intval($args['delay']),
             'client_id' => $config['google_client_id'],
             'ajax_url'  => admin_url('admin-ajax.php'),

@@ -5,6 +5,7 @@ namespace FluentAuth\App\Hooks\Handlers;
 use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
 use FluentAuth\App\Services\TwoFa\BaseTwoFaMethod;
+use FluentAuth\App\Services\TwoFa\DeviceRequirement;
 use FluentAuth\App\Services\TwoFa\EmailTwoFaMethod;
 use FluentAuth\App\Services\TwoFa\TwoFaBypass;
 use FluentAuth\App\Services\TwoFa\TwoFaService;
@@ -66,6 +67,12 @@ class TwoFaHandler
      * $completingChallenge: LoginSecurityHandler asks about it from another instance.
      */
     private static $withheldUsers = [];
+
+    /**
+     * Users this request let past a headless login without a challenge, by id.
+     * Read by maybeWithholdAuthCookies() so the cookie follows the decision.
+     */
+    private static $headlessPassedUsers = [];
 
     /**
      * The user core is about to issue cookies for, caught from `set_auth_cookie` because
@@ -580,6 +587,10 @@ class TwoFaHandler
             return $user;
         }
 
+        if ($this->headlessLoginMayPass($user, $method)) {
+            return $user;
+        }
+
         /*
          * Refused, but not stranded. The challenge is raised exactly as the login form
          * would have raised it, and the error carries the link to answer it - most login
@@ -599,6 +610,217 @@ class TwoFaHandler
             $this->getHandoffMessage($method, $raised['redirect_to']),
             ['challenge_url' => $raised['redirect_to']]
         );
+    }
+
+    /**
+     * Whether a login from somebody else's form is let through rather than refused.
+     *
+     * A form that cannot show a challenge leaves only two outcomes, and both cost
+     * something: refuse the login, and an ordinary visitor on a third-party form meets an
+     * error asking them to finish somewhere else; allow it, and a factor that would have
+     * been asked for is not asked for.
+     *
+     * The line drawn here is what the *user* has done and how much they can do, not what
+     * the form is:
+     *
+     * - Only an account that cannot publish is let through. `publish_posts` is the same
+     *   line Helper::getLowLevelRoles() already draws for the admin-area settings, and it
+     *   is what separates a subscriber or a customer from anybody who can change the
+     *   site. It matters because the shipped default has email codes on for
+     *   administrators, editors and authors and nobody in the required list - so a rule
+     *   that read only the required list would hand every default install's
+     *   administrator a way past their own second factor.
+     *
+     * - Somebody who set up an authenticator app or registered a passkey is never let
+     *   through. They opted into a second step; the form they happened to use is not a
+     *   reason to drop it. holdsEnrolledDevice() rather than hasDeviceFactor() on
+     *   purpose - a lone passkey is not asked for at sign-in, but it is still a device
+     *   this account chose to register.
+     * - Nor is anybody the site *requires* to hold one. That setting is the site saying
+     *   the account may not be reached without a second factor, and a login path is not
+     *   an exception to it.
+     * - Nor is an account under attack. getRequiredMethod() only hands back a method
+     *   that is not available to the user when the repeated-failure fallback fired, so
+     *   an unavailable method here means the challenge is the escalation rather than the
+     *   standing policy - the one case where challenging somebody who enrolled in
+     *   nothing is the whole point.
+     *
+     * What is left is a visitor with no second factor of their own, on a site that does
+     * not require one of them, who would have been shown an emailed code. That code is
+     * still asked for on every form the plugin can draw a challenge on; this is only
+     * about the forms where the alternative is an error message.
+     *
+     * @param $user \WP_User
+     * @param $method \FluentAuth\App\Services\TwoFa\BaseTwoFaMethod
+     * @return bool
+     */
+    /**
+     * The capabilities an account may hold and still be waved through.
+     *
+     * An allow list, and it has to be. The first version of this named the capabilities
+     * that disqualify somebody, which is a list you cannot finish: `activate_plugins`,
+     * `delete_users`, `unfiltered_html`, `switch_themes`, `update_core`, `import`, and
+     * whatever a membership plugin registered this morning were all missing from it, so a
+     * subscriber holding any one of them was let past. Naming what is harmless instead
+     * fails the safe way - an unrecognised capability refuses the pass rather than
+     * granting it, and the site meets the handoff message it used to.
+     *
+     * `read` and `level_0` are what an ordinary member has. A site whose customers hold
+     * some inert capability of its own adds it here.
+     *
+     * @return array
+     */
+    private static function harmlessCapabilities()
+    {
+        return apply_filters('fluent_auth/headless_harmless_capabilities', [
+            'read',
+            'level_0'
+        ]);
+    }
+
+    /**
+     * The capabilities asked through user_can() rather than read from the stored set.
+     *
+     * The walk below reads `allcaps`, which is what the roles and the user row grant. A
+     * `user_has_cap` filter - how a membership or role plugin hands out a capability at
+     * runtime - never touches that array, so anything granted that way is invisible to
+     * it. This list cannot be complete either, which is why it sits on top of the walk
+     * rather than instead of it: between them, a capability has to be both granted at
+     * runtime and absent from this list to slip through.
+     *
+     * @return array
+     */
+    private static function runtimeProbedCapabilities()
+    {
+        return (array)apply_filters('fluent_auth/headless_probed_capabilities', [
+            'manage_options',
+            'edit_posts',
+            'upload_files',
+            'edit_users',
+            'activate_plugins',
+            'delete_users',
+            'edit_theme_options',
+            'unfiltered_html',
+            'moderate_comments',
+            'manage_woocommerce'
+        ]);
+    }
+
+    /**
+     * Whether this account can change anything about the site.
+     *
+     * Read from `allcaps` rather than asked one capability at a time, so a capability
+     * nobody here has heard of still counts. Role names live in that array too and are
+     * skipped: they are how WordPress records which role granted the rest, not a power.
+     *
+     * @param $user \WP_User
+     * @return bool
+     */
+    private static function canChangeTheSite($user)
+    {
+        /*
+         * A network administrator holds everything everywhere, and core says so by
+         * short-circuiting has_cap() before allcaps is ever consulted - so the walk below
+         * reads a super admin sitting on a subscriber role as harmless.
+         */
+        if (is_multisite() && is_super_admin($user->ID)) {
+            return true;
+        }
+
+        /*
+         * Asked through user_can() first, because allcaps is the stored set and not the
+         * effective one: `user_has_cap` is how a membership or role plugin grants a
+         * capability at runtime, and none of that reaches the array. A short list is
+         * enough here - it is a backstop under the walk, not the boundary itself.
+         */
+        foreach (self::runtimeProbedCapabilities() as $capability) {
+            if (user_can($user, $capability)) {
+                return true;
+            }
+        }
+
+        $harmless = (array)self::harmlessCapabilities();
+        $roles = array_values($user->roles);
+
+        foreach ((array)$user->allcaps as $capability => $granted) {
+            if (!$granted || in_array($capability, $roles, true) || in_array($capability, $harmless, true)) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private function headlessLoginMayPass($user, $method)
+    {
+        /*
+         * A browser looking at somebody else's login form is the whole reason this
+         * exists. XML-RPC and REST are not that: there is no form, no reader, and no
+         * error message anybody would see - just a client that wanted a session without
+         * answering for it. Letting those through is how a second factor becomes
+         * optional for whoever can spell `xmlrpc.php`, and `disable_xmlrpc` ships off.
+         */
+        $isApiRequest = (defined('XMLRPC_REQUEST') && XMLRPC_REQUEST)
+            || (defined('REST_REQUEST') && REST_REQUEST);
+
+        /*
+         * Filterable because one site's API is another's front end: a headless build
+         * whose whole sign-in runs over REST may want the pass there, and a site that
+         * leaves xmlrpc.php open may want it excluded from more than this.
+         */
+        if ((bool)apply_filters('fluent_auth/headless_pass_excludes_api', $isApiRequest, $user)) {
+            return false;
+        }
+
+        /*
+         * An account under attack is challenged whatever else is true, and this has to
+         * ask outright rather than infer it. Reading it off `!isAvailableForUser()` only
+         * caught the case where the escalation had to reach for a method the user's
+         * roles do not have: with emailed codes already on for them, the dispatcher
+         * returns that available method first and the escalation is never consulted, so
+         * the one account the site is actively worried about was the one waved through.
+         */
+        if ($this->isChallengeRequired($user)) {
+            return false;
+        }
+        /*
+         * Anybody who can change the site is out - see canChangeTheSite(), which reads
+         * the whole capability set rather than testing a handful of names, because the
+         * handful was never going to be complete.
+         */
+        if (self::canChangeTheSite($user)) {
+            return false;
+        }
+
+        if (DeviceRequirement::isRequiredForUser($user) || DeviceRequirement::holdsEnrolledDevice($user)) {
+            return false;
+        }
+
+        // The repeated-failure fallback - see the note above.
+        if (!$method->isAvailableForUser($user)) {
+            return false;
+        }
+
+        /*
+         * The way back to refusing every one of them. A site that would rather a visitor
+         * met the handoff message than skipped the code answers false.
+         */
+        $allowed = (bool)apply_filters('fluent_auth/allow_headless_login_without_challenge', true, $user, $method);
+
+        /*
+         * Recorded, because letting the login past the `authenticate` chain is only half
+         * of a sign-in. maybeWithholdAuthCookies() resolves the challenge again on its
+         * own and refuses the cookie, so without this the caller was handed a WP_User
+         * while the browser stayed signed out - a form told "success" over a session
+         * that does not exist, which is worse than the error message this replaced.
+         */
+        if ($allowed) {
+            self::$headlessPassedUsers[$user->ID] = true;
+        }
+
+        return $allowed;
     }
 
     /**
@@ -633,6 +855,15 @@ class TwoFaHandler
         // wp_set_auth_cookie() asks more than once per request. Same answer every time.
         if (isset(self::$withheldUsers[$userId])) {
             return false;
+        }
+
+        /*
+         * Already decided, on the way in. maybeDenyHeadlessLogin() weighed this sign-in
+         * and let it through; re-deciding it here on a narrower question would refuse the
+         * cookie for the login it had just allowed.
+         */
+        if (isset(self::$headlessPassedUsers[$userId])) {
+            return $send;
         }
 
         /*
@@ -757,6 +988,7 @@ class TwoFaHandler
     public static function resetRequestState()
     {
         self::$withheldUsers = [];
+        self::$headlessPassedUsers = [];
         self::$completingChallenge = false;
         self::$cookieAuthenticatedUserId = 0;
         self::$cookieMinted = false;

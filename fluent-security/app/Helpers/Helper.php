@@ -199,11 +199,27 @@ class Helper
             'magic_link_primary'      => 'no',
             'email2fa'                => 'yes',
             'email2fa_roles'          => ['administrator', 'editor', 'author'],
-            'totp_2fa'                => 'yes',
             /*
-             * Offered to the roles that can change the site, matching the email codes
-             * above. An empty list here would switch the method on for nobody, which is
-             * a recommendation that reads as done and protects no one.
+             * Off, while emailed codes above are on, and that pair is deliberate.
+             *
+             * Both methods are good; only one of them can be recommended to a site nobody
+             * has looked at. An emailed code needs nothing explained and nothing installed
+             * - the person already has the inbox. An authenticator app needs somebody to
+             * know what TOTP is, install an app, scan a QR code and keep the phone, and a
+             * default that assumes all four is a default that silently fails the people
+             * least equipped to notice. So the app is a setting to turn on rather than one
+             * to discover already on, and the wizard opens with it off.
+             *
+             * This is the recommendation the checklist and "apply recommended" read too,
+             * so the one-click answer to "turn on two-factor" is emailed codes. Neither
+             * screen hides the app, and turning it on is one switch away.
+             */
+            'totp_2fa'                => 'no',
+            /*
+             * Kept, even with the method off above, so the roles are already filled in the
+             * moment somebody does switch the app on - an empty list there switches the
+             * method on for nobody, which is the one state that reads as done and protects
+             * no one.
              *
              * Offering it is all this does. Which roles must have one stays absent for
              * the reason given above: imposing that locks people out.
@@ -302,11 +318,17 @@ class Helper
         return $statuses;
     }
 
-    public static function getLoginMediaLabel($media)
+    /**
+     * Every `media` slug this plugin writes, and the name the screens print for it.
+     *
+     * Split out of getLoginMediaLabel() so the log search can read the same list - see
+     * findLoginMediaSlugs().
+     *
+     * @return array
+     */
+    public static function getLoginMediaLabels()
     {
-        $media = $media ?: 'web';
-
-        $labels = apply_filters('fluent_auth/login_media_labels', [
+        return apply_filters('fluent_auth/login_media_labels', [
             'web'         => __('Login form', 'fluent-security'),
             'magic_login' => __('Magic link', 'fluent-security'),
             'email_2fa'   => __('Email code', 'fluent-security'),
@@ -344,6 +366,43 @@ class Helper
             'plugin_updated'       => __('Plugin updated', 'fluent-security'),
             'password_reset_request' => __('Password reset requested', 'fluent-security')
         ]);
+    }
+
+    /**
+     * The slugs whose label reads like the search somebody typed.
+     *
+     * `media` holds a slug - `magic_login`, `two_factor_totp` - and the screen prints a
+     * label. So a search for "Magic link", which is the only name the reader has ever
+     * been shown, matched nothing, while "google" worked by coincidence because the slug
+     * happens to be the word. This closes that gap by searching what is on screen.
+     *
+     * @param string $search
+     * @return array
+     */
+    public static function findLoginMediaSlugs($search)
+    {
+        $search = trim((string)$search);
+
+        if ($search === '') {
+            return [];
+        }
+
+        $matched = [];
+
+        foreach (self::getLoginMediaLabels() as $slug => $label) {
+            if (stripos($label, $search) !== false) {
+                $matched[] = $slug;
+            }
+        }
+
+        return array_values(array_unique($matched));
+    }
+
+    public static function getLoginMediaLabel($media)
+    {
+        $media = $media ?: 'web';
+
+        $labels = self::getLoginMediaLabels();
 
         if (isset($labels[$media])) {
             return $labels[$media];
