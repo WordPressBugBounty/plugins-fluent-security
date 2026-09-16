@@ -72,12 +72,15 @@ class GithubAuthService
             return new \WP_Error('api_error', __('API Error when authenticate via github', 'fluent-security'));
         }
 
-        $email = Arr::get($data, 'email');
+        /*
+         * Always resolve through /user/emails, which is the only endpoint that tells us
+         * whether an address is verified. The public profile email from /user carries no
+         * such flag, and it is what an existing WordPress account gets matched on.
+         */
+        $email = self::getPrimaryEmail($headers);
 
-        // The /user endpoint returns null for email when the user has it set to private.
-        // Fetch from /user/emails to get the primary verified email.
         if (empty($email)) {
-            $email = self::getPrimaryEmail($headers);
+            return new \WP_Error('email_error', __('We could not get a verified email address from your Github account. Please verify your email with Github and try again', 'fluent-security'));
         }
 
         return [
@@ -107,6 +110,13 @@ class GithubAuthService
 
         foreach ($emails as $entry) {
             if (!empty($entry['primary']) && !empty($entry['verified'])) {
+                return Arr::get($entry, 'email', '');
+            }
+        }
+
+        // No verified primary: fall back to any verified address rather than none.
+        foreach ($emails as $entry) {
+            if (!empty($entry['verified'])) {
                 return Arr::get($entry, 'email', '');
             }
         }

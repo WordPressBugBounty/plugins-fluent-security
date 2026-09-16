@@ -16,22 +16,49 @@ class SocialAuthApiController
             'settings'  => Helper::getSocialAuthSettings('view'),
             'auth_info' => [
                 'github'   => [
-                    'is_available' => true,
-                    'app_redirect' => GithubAuthService::getAppRedirect(),
-                    'doc_url'      => 'https://fluentauth.com/docs/github-auth-connection'
+                    'is_available'        => true,
+                    'app_redirect'        => GithubAuthService::getAppRedirect(),
+                    'has_wp_config_keys'  => self::hasWpConfigKeys('github'),
+                    'doc_url'             => 'https://fluentauth.com/docs/github-auth-connection'
                 ],
                 'google'   => [
-                    'is_available' => true,
-                    'app_redirect' => GoogleAuthService::getAppRedirect(),
-                    'doc_url'      => 'https://fluentauth.com/docs/google-auth-connection'
+                    'is_available'        => true,
+                    'app_redirect'        => GoogleAuthService::getAppRedirect(),
+                    'has_wp_config_keys'  => self::hasWpConfigKeys('google'),
+                    'doc_url'             => 'https://fluentauth.com/docs/google-auth-connection'
                 ],
                 'facebook' => [
-                    'is_available' => true,
-                    'app_redirect' => FacebookAuthService::getAppRedirect(),
-                    'doc_url'      => 'https://fluentauth.com/docs/facebook-auth-connection'
+                    'is_available'        => true,
+                    'app_redirect'        => FacebookAuthService::getAppRedirect(),
+                    'has_wp_config_keys'  => self::hasWpConfigKeys('facebook'),
+                    'doc_url'             => 'https://fluentauth.com/docs/facebook-auth-connection'
                 ]
             ]
         ];
+    }
+
+    /**
+     * Whether this provider's credentials are sitting in wp-config.php.
+     *
+     * Only PHP can see a constant, so the screen is told whether the pair is there
+     * rather than left to guess. It answers for the constants themselves whatever the
+     * saved storage choice is - the radio can be moved without saving, and the answer
+     * for where it now points should not depend on where it used to.
+     *
+     * Whether the client ID and secret are in the database is not reported: those are
+     * in the form the screen is already holding, so it reads them there.
+     */
+    private static function hasWpConfigKeys($provider)
+    {
+        $prefix = 'FLUENT_AUTH_' . strtoupper($provider);
+
+        foreach (['_CLIENT_ID', '_CLIENT_SECRET'] as $suffix) {
+            if (!defined($prefix . $suffix) || !constant($prefix . $suffix)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static function saveSettings(\WP_REST_Request $request)
@@ -50,6 +77,17 @@ class SocialAuthApiController
 
     private static function validateSettings($settings)
     {
+        /*
+         * Turning social login off clears the stored credentials, which is right when it
+         * is what was asked for and destructive when it is not. A payload that is not a
+         * settings array cannot have asked for it - it is a request that went wrong, and
+         * the one below would read a missing 'enabled' as "no" and wipe the client IDs
+         * and secrets on the strength of it. Refuse instead.
+         */
+        if (!is_array($settings) || !isset($settings['enabled'])) {
+            return new \WP_Error('invalid_settings', __('Social login settings are missing from this request', 'fluent-security'), ['status' => 400]);
+        }
+
         $oldSettings = Helper::getSocialAuthSettings('view');
         $settings = Arr::only($settings, array_keys($oldSettings));
 

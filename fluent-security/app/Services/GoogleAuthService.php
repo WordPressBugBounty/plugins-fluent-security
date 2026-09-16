@@ -72,11 +72,46 @@ class GoogleAuthService
 
         $config = Helper::getSocialAuthSettings('edit');
 
-        if ($config['google_client_id'] != Arr::get($data, 'aud')) {
+        $clientId = (string)Arr::get($config, 'google_client_id');
+        $audience = (string)Arr::get($data, 'aud');
+
+        /*
+         * Both have to be present before comparing. A misconfigured site leaves the
+         * client id empty, and an error response from tokeninfo carries no audience -
+         * comparing those two would match and wave the token through.
+         */
+        if (!is_array($data) || !$clientId || !$audience || !hash_equals($clientId, $audience)) {
             return new \WP_Error('token_error', __('Sorry! Invalid token audience for google authentication. Please try again', 'fluent-security'));
         }
 
+        /*
+         * The email is what we match an existing WordPress account on, so an unverified
+         * one would mean anybody able to put an address on a Google account could sign
+         * in as whoever holds that address here. Google documents this claim as the
+         * thing to check before treating the email as an identity.
+         */
+        if (!self::isVerifiedEmail($data)) {
+            return new \WP_Error('email_unverified', __('Your Google account email address is not verified. Please verify it with Google and try again', 'fluent-security'));
+        }
+
         return $data;
+    }
+
+    /**
+     * tokeninfo reports the claim as the string "true", an id_token payload as a bool.
+     *
+     * @param $data array
+     * @return bool
+     */
+    private static function isVerifiedEmail($data)
+    {
+        $verified = Arr::get($data, 'email_verified', Arr::get($data, 'verified_email'));
+
+        if (is_string($verified)) {
+            return strtolower($verified) === 'true';
+        }
+
+        return $verified === true;
     }
 
 

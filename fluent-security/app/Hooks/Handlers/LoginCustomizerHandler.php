@@ -5,6 +5,8 @@ namespace FluentAuth\App\Hooks\Handlers;
 use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
 use FluentAuth\App\Services\AuthService;
+use FluentAuth\App\Services\TwoFa\AuthFactor;
+use FluentAuth\App\Services\TwoFa\TwoFaService;
 
 class LoginCustomizerHandler
 {
@@ -67,8 +69,29 @@ class LoginCustomizerHandler
         $this->loadCustomizedDesign($currentAction, $formType);
     }
 
+    /**
+     * Whether this request's login screen is being dressed by the designer.
+     *
+     * Answered with a flag set on the way through rather than by asking the same
+     * questions again: the decision depends on the settings, the action and the form
+     * type, and a second copy of it would be a second thing to keep in step.
+     *
+     * `login_init` runs before `login_form_{$action}`, so a screen rendering itself on
+     * that hook can rely on this having been decided already.
+     *
+     * @return bool
+     */
+    public static function isCustomizedScreen()
+    {
+        return self::$customized;
+    }
+
+    private static $customized = false;
+
     private function loadCustomizedDesign($currentAction, $formType)
     {
+        self::$customized = true;
+
         $allSettings = $this->getSettings();
         $formSettings = Arr::get($allSettings, $formType, []);
 
@@ -80,6 +103,11 @@ class LoginCustomizerHandler
 
             if ($formType == 'reset_password') {
                 $formSettings['form']['title'] = __('Reset Password', 'fluent-security');
+                $formSettings['form']['description'] = '';
+            }
+
+            if ($formType == 'totp_setup') {
+                $formSettings['form']['title'] = __('Set up two-factor authentication', 'fluent-security');
                 $formSettings['form']['description'] = '';
             }
         }
@@ -285,11 +313,14 @@ class LoginCustomizerHandler
         }
 
         $token = Arr::get($_POST, '_email_verification_token', '');
-        $isTokenValidated = AuthService::verifyTokenHash($verficationHash, $token);
+        $isTokenValidated = AuthService::verifyTokenHash($verficationHash, $token, $user_email);
         if (is_wp_error($isTokenValidated)) {
             $errors->add('confirm_token', $isTokenValidated->get_error_message());
             return false;
         }
+
+        // The mailbox has just been proven; the sign in that follows may rely on it.
+        Helper::setSatisfiedFactors([AuthFactor::EMAIL]);
 
         $validationErrors = $this->validateRegistrationData($_POST);
         if ($validationErrors->has_errors()) {
@@ -428,7 +459,13 @@ class LoginCustomizerHandler
             'checkemail',
             'confirmaction',
             'login',
-            'fls_2fa_email'
+            /*
+             * The plugin's own auth screens. They are as much a part of signing in as the
+             * login form is, so a site that has dressed its login page should not drop
+             * somebody onto bare WordPress grey halfway through the process.
+             */
+            TotpSetupPageHandler::LOGIN_ACTION,
+            TwoFaService::LOGIN_ACTION
         );
 
         if (!in_array($action, $default_actions, true)) {
@@ -453,6 +490,14 @@ class LoginCustomizerHandler
                 break;
             case 'retrievepassword':
                 $type = 'reset_password_confirm';
+                break;
+            /*
+             * A type of its own, with nothing configured against it, so it takes the
+             * login form's colours and banner but not its words - "Please enter your
+             * details to login" is the wrong sentence for somebody already signed in.
+             */
+            case TotpSetupPageHandler::LOGIN_ACTION:
+                $type = 'totp_setup';
                 break;
             default:
                 return 'login';

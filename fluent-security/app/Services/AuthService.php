@@ -4,6 +4,8 @@ namespace FluentAuth\App\Services;
 
 use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
+use FluentAuth\App\Hooks\Handlers\TwoFaHandler;
+use FluentAuth\App\Services\TwoFa\AuthFactor;
 
 class AuthService
 {
@@ -18,6 +20,15 @@ class AuthService
         }
 
         Helper::setLoginMedia($provider);
+
+        /*
+         * Said here as well as in getSocialTwoFaRedirect(), because a brand new account
+         * never passes through that - and the cookie it is about to be issued is judged
+         * on what this login proved. See TwoFaHandler::maybeWithholdAuthCookies().
+         */
+        if ($provider) {
+            Helper::setSatisfiedFactors([AuthFactor::IDP, AuthFactor::EMAIL]);
+        }
 
         $email = $userData['email'];
 
@@ -111,6 +122,52 @@ class AuthService
         }
     }
 
+    /**
+     * The second factor a social login still owes, as a URL to send the browser to.
+     *
+     * Signing in through a provider proves the provider account and, because the WP
+     * account is matched on an address the provider has already verified, the mailbox
+     * behind it. An emailed code would be asking again for something just proven, so it
+     * is skipped. A device factor - an authenticator app, a passkey - proves something
+     * the provider never did, so it is still required here: otherwise the provider
+     * account quietly becomes a way around the factor the user turned on.
+     *
+     * @param $user \WP_User
+     * @return string|false
+     */
+    public static function getSocialTwoFaRedirect($user)
+    {
+        Helper::setSatisfiedFactors([AuthFactor::IDP, AuthFactor::EMAIL]);
+
+        $handler = new TwoFaHandler();
+
+        return $handler->sendAndGet2FaConfirmFormUrl($user, 'url', self::getIntentRedirect());
+    }
+
+    /**
+     * The redirect the social flow stashed before handing off to the provider.
+     *
+     * Social login carries its intent in a cookie rather than $_REQUEST, so it has to
+     * be passed to the 2FA challenge explicitly or it is lost across the redirect.
+     *
+     * @return string
+     */
+    private static function getIntentRedirect()
+    {
+        if (empty($_COOKIE['fs_intent_redirect'])) {
+            return '';
+        }
+
+        $redirect = sanitize_url(urldecode(wp_unslash($_COOKIE['fs_intent_redirect'])));
+
+        if (!$redirect || !filter_var($redirect, FILTER_VALIDATE_URL)) {
+            return '';
+        }
+
+        // Must be a URL on this site, or the challenge becomes an open redirect.
+        return Helper::getValidatedRedirectUrl($redirect, '');
+    }
+
     public static function makeLogin($user, $provider = '')
     {
         if (is_numeric($user)) {
@@ -146,14 +203,73 @@ class AuthService
 
     public static function setStateToken()
     {
-        $state = md5(wp_generate_uuid4());
-        setcookie('fs_auth_state', $state, time() + 3600, COOKIEPATH, COOKIE_DOMAIN, is_ssl());  /* expire in 1 hour */
+        $state = wp_generate_password(32, false);
+
+        /*
+         * HttpOnly: this is a CSRF token, no script has any reason to read it.
+         * SameSite=Lax: the provider returns the user by top level navigation, which Lax
+         * still sends the cookie on, while cross site POSTs do not get it.
+         */
+        if (!headers_sent()) {
+            setcookie('fs_auth_state', $state, [
+                'expires'  => time() + 900, // 15 minutes is ample for a round trip
+                'path'     => COOKIEPATH,
+                'domain'   => COOKIE_DOMAIN,
+                'secure'   => is_ssl(),
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]);
+        }
+
+        $_COOKIE['fs_auth_state'] = $state;
+
         return $state;
     }
 
     public static function getStateToken()
     {
         return Arr::get($_COOKIE, 'fs_auth_state');
+    }
+
+    /**
+     * Confirms the provider sent us back to a flow this browser actually started.
+     *
+     * @param $state string
+     * @return bool
+     */
+    public static function verifyStateToken($state)
+    {
+        $expected = self::getStateToken();
+
+        if (!$state || !$expected || !is_string($state)) {
+            return false;
+        }
+
+        return hash_equals($expected, $state);
+    }
+
+    /**
+     * A state token is good for exactly one callback. Leaving it in place kept it
+     * replayable for as long as the cookie lived.
+     *
+     * @return void
+     */
+    public static function clearStateToken()
+    {
+        unset($_COOKIE['fs_auth_state']);
+
+        if (headers_sent()) {
+            return;
+        }
+
+        setcookie('fs_auth_state', '', [
+            'expires'  => time() - 3600,
+            'path'     => COOKIEPATH,
+            'domain'   => COOKIE_DOMAIN,
+            'secure'   => is_ssl(),
+            'httponly' => true,
+            'samesite' => 'Lax'
+        ]);
     }
 
     /**
@@ -295,7 +411,7 @@ class AuthService
         return $errors;
     }
 
-    public static function verifyTokenHash($verificationHash, $token)
+    public static function verifyTokenHash($verificationHash, $token, $email = '')
     {
         $logHash = flsDb()->table('fls_login_hashes')
             ->where('login_hash', $verificationHash)
@@ -312,7 +428,11 @@ class AuthService
             return new \WP_Error('verification_code_expired', __('Your verification code has beeen expired. Please try again', 'fluent-security'));
         }
 
-        if (!wp_check_password($token, $logHash->two_fa_code_hash)) {
+        // Bind verification to the email the code was sent to. The hash commits
+        // to (code, email), so submitting a different email at signup fails here.
+        $checkValue = $email ? $token . '|' . strtolower(trim($email)) : $token;
+
+        if (!wp_check_password($checkValue, $logHash->two_fa_code_hash)) {
             flsDb()->table('fls_login_hashes')->where('id', $logHash->id)
                 ->update([
                     'used_count' => $logHash->used_count + 1

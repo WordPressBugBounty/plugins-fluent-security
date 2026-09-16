@@ -64,18 +64,27 @@ class GoogleOneTapAuthHandler
 
     public function handleGoogleOneTapLogin()
     {
-        if (is_user_logged_in()) {
-            $redirectUrl = admin_url();
-            if ($_POST['mode'] !== 'inline') {
-                $providedUrl = isset($_POST['current_url']) ? $_POST['current_url'] : '';
-                if (filter_var($providedUrl, FILTER_VALIDATE_URL)) {
-                    $redirectUrl = esc_url_raw($providedUrl);
-                }
-            }
+        /*
+         * Asked first, because nothing else on this path asks.
+         *
+         * Every other entry point in this class is gated - the shortcode, the button, the
+         * script that draws it - but the endpoint they all post to was not, and it does not
+         * need any of them: it needs a Google ID token and the site's client id, and
+         * Helper::getSocialAuthSettings() hands back the client id whether or not the
+         * feature is switched on. So turning social login off removed the button and left
+         * the door, and an administrator switching it off during an incident would have had
+         * no idea. On a site with open registration that door also creates accounts.
+         */
+        if (!$this->isOnetapEnabled()) {
+            wp_send_json([
+                'message' => __('One tap sign-in is not available on this site.', 'fluent-security')
+            ], 422);
+        }
 
+        if (is_user_logged_in()) {
             wp_send_json([
                 'message'      => __('You are already logged in.', 'fluent-security'),
-                'redirect_url' => $redirectUrl
+                'redirect_url' => $this->getRequestedRedirect()
             ]);
         }
 
@@ -90,15 +99,35 @@ class GoogleOneTapAuthHandler
         }
 
         if (isset($_POST['mode']) && $_POST['mode'] !== 'inline') {
-            $providedUrl = isset($_POST['current_url']) ? $_POST['current_url'] : '';
-            if (filter_var($providedUrl, FILTER_VALIDATE_URL)) {
-                $redirectUrl = esc_url_raw($providedUrl);
-            }
+            $redirectUrl = $this->getRequestedRedirect($redirectUrl);
         }
 
         wp_send_json([
             'redirect_url' => $redirectUrl
         ]);
+    }
+
+    /**
+     * The browser assigns this straight to window.location, so it never passes through
+     * wp_safe_redirect. Being a well formed URL is not enough - it has to be ours, or
+     * the endpoint is an open redirect anyone can point at a lookalike site.
+     *
+     * @param $fallback string
+     * @return string
+     */
+    private function getRequestedRedirect($fallback = '')
+    {
+        if (!$fallback) {
+            $fallback = admin_url();
+        }
+
+        $providedUrl = isset($_POST['current_url']) ? sanitize_url(wp_unslash($_POST['current_url'])) : '';
+
+        if (!$providedUrl || !filter_var($providedUrl, FILTER_VALIDATE_URL)) {
+            return $fallback;
+        }
+
+        return Helper::getValidatedRedirectUrl($providedUrl, $fallback);
     }
 
     private function handleGoogleTokenConfirm($crednetial)
@@ -135,8 +164,7 @@ class GoogleOneTapAuthHandler
 
         $existingUser = get_user_by('email', $userData['email']);
         if ($existingUser) {
-            $twoFaHandler = new TwoFaHandler();
-            if ($redirectUrl = $twoFaHandler->sendAndGet2FaConfirmFormUrl($existingUser)) {
+            if ($redirectUrl = AuthService::getSocialTwoFaRedirect($existingUser)) {
                 return $redirectUrl;
             }
         }
@@ -149,12 +177,14 @@ class GoogleOneTapAuthHandler
 
         $intentRedirectTo = '';
         if (isset($_COOKIE['fs_intent_redirect'])) {
-            $cookieRedirect = $_COOKIE['fs_intent_redirect'];
+            $cookieRedirect = sanitize_url(urldecode(wp_unslash($_COOKIE['fs_intent_redirect'])));
+
             if (!filter_var($cookieRedirect, FILTER_VALIDATE_URL)) {
                 $cookieRedirect = admin_url();
-                $intentRedirectTo = '';
             }
-            $redirect_to = $cookieRedirect;
+
+            // Same reasoning as getRequestedRedirect(): must be a URL on this site.
+            $redirect_to = Helper::getValidatedRedirectUrl($cookieRedirect, admin_url());
         } else {
             if (is_multisite() && !get_active_blog_for_user($user->ID) && !is_super_admin($user->ID)) {
                 $redirect_to = user_admin_url();

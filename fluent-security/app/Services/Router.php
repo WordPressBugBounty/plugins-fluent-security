@@ -13,7 +13,18 @@ class Router
 
     public function route($method, $endpoint, $callback, $permissions = [])
     {
+        /*
+         * `{id}` stays numeric, so a route declared with one still refuses anything that is
+         * not a number before the controller is reached.
+         */
         $endpoint = str_replace('{id}', '(?P<id>[\d]+)', $endpoint);
+
+        /*
+         * Any other `{name}` is a slug - the name of a setting, a check, a provider. Without
+         * this they were left in the path verbatim and the route simply never matched, which
+         * shows up as a 404 on an endpoint that looks correctly registered.
+         */
+        $endpoint = preg_replace('/\{([a-z_]+)\}/', '(?P<$1>[a-zA-Z0-9_\-]+)', $endpoint);
 
         register_rest_route($this->namespace, $endpoint, array(
             'methods'  => $method,
