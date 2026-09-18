@@ -5,6 +5,7 @@ namespace FluentAuth\App\Services;
 use FluentAuth\App\Helpers\Arr;
 use FluentAuth\App\Helpers\Helper;
 use FluentAuth\App\Services\IntegrityChecker\IntegrityHelper;
+use FluentAuth\App\Services\TwoFa\WebAuthn\RelyingParty;
 
 /**
  * The security checklist on the dashboard, and the one-click way to satisfy an item.
@@ -192,14 +193,41 @@ class SecurityChecks
                 'scored'   => true,
                 'route'    => 'settings_general',
                 'section'  => 'two_fa',
+                /*
+                 * What the button writes, and `passkey_2fa` is deliberately not in it even
+                 * though `done` below counts it. apply() writes every key in this list, so
+                 * adding it here would have the one-click button switch passkeys on - which
+                 * getRecommendedSettings() does not do, leaving this button and "Apply
+                 * recommended" disagreeing about what a well-configured site looks like. It
+                 * would also store the switch on over plain http, where no passkey can be
+                 * created, so the site would be told it had gained a factor nobody can register.
+                 * Counting a setting and turning it on are different questions.
+                 */
                 'settings' => ['totp_2fa', 'email2fa', 'email2fa_roles', 'totp_2fa_roles'],
                 /*
-                 * Either factor counts. Turning them on only lets people set one up - the
+                 * Any factor counts. Turning them on only lets people set one up - the
                  * roles that must have one are left alone on purpose, because imposing
                  * that from a one-click button is how an administrator locks themselves out.
+                 *
+                 * Passkeys count, and their absence here was a straightforward bug: a site
+                 * running passkeys and nothing else was told it had no second factor and
+                 * docked the points for it, while the plugin's own enforcement was happily
+                 * accepting one as meeting a requirement. The strongest method the plugin
+                 * offers is not the one to leave out of the tally.
+                 *
+                 * The switch is not enough on its own, though, which is why this asks
+                 * RelyingParty::isSupported() as well: over plain http no passkey can be
+                 * created whatever the setting says, and ticking this off for one would
+                 * score a site as having a second factor that nobody on it can register.
+                 * That is the same question PasskeyTwoFaMethod::isSwitchedOn() asks, and
+                 * the passkey card on the settings screen says so in as many words.
                  */
                 'done'     => function ($settings) {
-                    return Arr::get($settings, 'totp_2fa') === 'yes'
+                    $passkeyOn = Arr::get($settings, 'passkey_2fa') === 'yes'
+                        && RelyingParty::isSupported();
+
+                    return $passkeyOn
+                        || Arr::get($settings, 'totp_2fa') === 'yes'
                         || Arr::get($settings, 'email2fa') === 'yes';
                 }
             ],

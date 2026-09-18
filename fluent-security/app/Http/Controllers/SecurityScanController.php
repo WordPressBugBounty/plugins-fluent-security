@@ -7,6 +7,7 @@ use FluentAuth\App\Services\Checks\AcceptedFiles;
 use FluentAuth\App\Services\Checks\Files\MuPluginsCheck;
 use FluentAuth\App\Services\IntegrityChecker\Api;
 use FluentAuth\App\Services\IntegrityChecker\CheckerService;
+use FluentAuth\App\Services\IntegrityChecker\ChecksumException;
 use FluentAuth\App\Services\IntegrityChecker\ExtensionChecker;
 use FluentAuth\App\Services\IntegrityChecker\ExtensionInventory;
 use FluentAuth\App\Services\IntegrityChecker\IntegrityHelper;
@@ -17,6 +18,19 @@ class SecurityScanController
 {
     public static function getSettings(\WP_REST_Request $request)
     {
+        /*
+         * Before the settings are read, because this can change them. An install that connected
+         * to the service `dash.fluentauth.com` replaced still holds that pair, and until it is
+         * retired this screen draws a connected site whose alerts stopped arriving at the move.
+         *
+         * Here rather than only in the cron, because the cron will not reach most of them: it
+         * refuses to run unless `auto_scan` is on, and on the old service that was a separate
+         * switch, off by default, that an owner had to go and find. A site that connected and
+         * never turned scheduling on posts nothing, is refused nothing, and would have gone on
+         * claiming a working connection for as long as it was installed.
+         */
+        IntegrityHelper::maybeRetireLegacyConnection();
+
         $settings = IntegrityHelper::getSettings();
 
         if ($settings['last_checked']) {
@@ -227,8 +241,19 @@ class SecurityScanController
 
         try {
             $checkerService = new CheckerService();
+        } catch (ChecksumException $e) {
+            /*
+             * The checksums could not be fetched from wordpress.org. Its own catch because the
+             * message is already written for the site owner and already says which of the two
+             * things went wrong; the screen prints it as-is.
+             */
+            return new \WP_Error('checksums_unavailable', $e->getMessage(), [
+                'status' => 422,
+                'reason' => $e->getReason(),
+                'data'   => $e->getDetail()
+            ]);
         } catch (\Exception $e) {
-            return new \WP_Error('invalid_response', __('An error occurred while scanning the site. If you continously get this error, please reconnect the API.', 'fluent-security'), ['status' => 422, 'data' => $e->getMessage()]);
+            return new \WP_Error('scan_failed', __('The site could not be scanned. Please try again in a few minutes.', 'fluent-security'), ['status' => 422, 'data' => $e->getMessage()]);
         }
 
         /* Kept for the screens that do not re-scan - see IntegrityHelper::getCoreResults(). */

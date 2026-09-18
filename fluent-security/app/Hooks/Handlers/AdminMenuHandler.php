@@ -6,6 +6,8 @@ use FluentAuth\App\Helpers\Helper;
 use FluentAuth\App\Services\Onboarding;
 use FluentAuth\App\Services\Optin;
 use FluentAuth\App\Services\TransStrings;
+use FluentAuth\App\Services\TwoFa\DeviceRequirement;
+use FluentAuth\App\Services\TwoFa\TwoFaBypass;
 use FluentAuth\App\Services\TwoFa\WebAuthn\RelyingParty;
 
 class AdminMenuHandler
@@ -195,6 +197,13 @@ class AdminMenuHandler
              */
             'totp_setup_url'  => TotpSetupPageHandler::getUrl(),
             /*
+             * Where an administrator sets up their own second factor. The profile screen
+             * rather than the address above, because it is the fuller of the two - passkey,
+             * authenticator app and recovery codes on one card - and anyone reading the
+             * admin app can reach it. Same place TwoFaReminderHandler's notice points.
+             */
+            'profile_2fa_url' => admin_url('profile.php#fls-two-factor'),
+            /*
              * Browsers refuse WebAuthn outside a secure context, so on a plain http site
              * the switch would turn on a feature that cannot work. The screen says so
              * rather than letting an administrator discover it from a user's report.
@@ -218,7 +227,34 @@ class AdminMenuHandler
                 'full_name' => $fullName,
                 'email'     => $currentUser->user_email,
                 // The dashboard greets whoever is reading it, so it needs their face.
-                'avatar'    => get_avatar_url($currentUser->ID, ['size' => 96])
+                'avatar'    => get_avatar_url($currentUser->ID, ['size' => 96]),
+                /*
+                 * These two are what let the settings screen notice that a requirement
+                 * about to be saved covers the person saving it. Without them, the one
+                 * setting on the page that can lock the reader out of their own site was
+                 * saved as quietly as the log retention period - and the first they heard
+                 * of it was the next request being refused.
+                 *
+                 * Roles rather than a precomputed "will this lock me out", because the
+                 * answer depends on values the reader has not saved yet.
+                 */
+                'roles'      => array_values($currentUser->roles),
+                /*
+                 * Whether they already hold a passkey or an authenticator app, so someone
+                 * who is protected is not warned about a requirement they already meet.
+                 * hasDeviceFactor() rather than isSatisfiedBy(), which reads the saved
+                 * level - the level being edited is one of the things in question.
+                 */
+                'has_device_factor' => DeviceRequirement::hasDeviceFactor($currentUser),
+                /*
+                 * FLUENT_AUTH_DISABLE_TWO_FA lifts the requirement for this account, so
+                 * saving one does not lock them out and warning them that it will would be
+                 * a dialog on every unrelated save - the settings screens share one Save.
+                 * Read here rather than inferred from has_device_factor, because they are
+                 * different facts: one is a credential, the other is a line in
+                 * wp-config.php.
+                 */
+                'two_fa_bypassed'   => TwoFaBypass::isActiveFor($currentUser)
             ],
             /*
              * Whether this site still has a first run waiting for it. The app redirects

@@ -7,6 +7,7 @@ use FluentAuth\App\Helpers\Helper;
 use FluentAuth\App\Services\TwoFa\FactorStore;
 use FluentAuth\App\Hooks\Handlers\ServerModeHandler;
 use FluentAuth\App\Services\ProxyDetection;
+use FluentAuth\App\Services\TwoFa\RivalTwoFa;
 use FluentAuth\App\Services\TwoFa\WebAuthn\RelyingParty;
 
 class SettingsController
@@ -24,7 +25,13 @@ class SettingsController
              * the way on the sites that will never need it and speak up on the ones
              * where it is already going wrong.
              */
-            'proxy_detection'     => ProxyDetection::detect()
+            'proxy_detection'     => ProxyDetection::detect(),
+            /*
+             * Another plugin finishing the logins this screen is configuring. Null on almost
+             * every site; when it is not, the second factor being switched on below does not
+             * work, and this screen is where that has to be said. See RivalTwoFa::notice().
+             */
+            'two_fa_conflict'     => RivalTwoFa::notice()
         ];
     }
 
