@@ -49,21 +49,16 @@ class AuthService
         $createUserData = [
             'email'    => $userData['email'],
             'password' => wp_generate_password(8),
-            'username' => sanitize_user($userData['email'])
+            'username' => self::generateUsername($userData)
         ];
 
-        if (!empty($userData['username'])) {
-            if (username_exists($userData['username'])) {
-                $createUserData['username'] = sanitize_user($userData['username']);
-            }
+        $displayName = trim((string)Arr::get($userData, 'full_name'));
+        if (!$displayName) {
+            $displayName = trim(Arr::get($userData, 'first_name') . ' ' . Arr::get($userData, 'last_name'));
         }
 
-        $defaultRole = get_option('default_role');
-        if (!$defaultRole || $defaultRole === 'administrator') {
-            $defaultRole = 'subscriber';
-        }
-
-        $setRole = apply_filters('fluent_auth/user_role', $defaultRole);
+        // registerNewUser() turns an administrator, or a role that does not exist, into a subscriber.
+        $setRole = apply_filters('fluent_auth/user_role', get_option('default_role'));
 
         $userId = self::registerNewUser($createUserData['username'], $createUserData['email'], $createUserData['password'], [
             'role'        => $setRole,
@@ -72,6 +67,7 @@ class AuthService
             'user_url'    => Arr::get($userData, 'user_url'),
             'full_name'   => Arr::get($userData, 'full_name'),
             'description' => Arr::get($userData, 'description'),
+            'display_name' => $displayName,
             '__validated' => true
         ]);
 
@@ -151,17 +147,20 @@ class AuthService
      * The redirect the social flow stashed before handing off to the provider.
      *
      * Social login carries its intent in a cookie rather than $_REQUEST, so it has to
-     * be passed to the 2FA challenge explicitly or it is lost across the redirect.
+     * be passed to the 2FA challenge explicitly or it is lost across the redirect. The
+     * provider callbacks and One Tap read it here too, so there is one place that
+     * decides whether it is somewhere this site will send a browser.
      *
-     * @return string
+     * @return string a URL on a trusted host, or '' when there is none
      */
-    private static function getIntentRedirect()
+    public static function getIntentRedirect()
     {
-        if (empty($_COOKIE['fs_intent_redirect'])) {
+        if (empty($_COOKIE['fs_intent_redirect']) || !is_string($_COOKIE['fs_intent_redirect'])) {
             return '';
         }
 
-        $redirect = sanitize_url(urldecode(wp_unslash($_COOKIE['fs_intent_redirect'])));
+        // PHP has already decoded the cookie; decoding again would mangle encoded query values.
+        $redirect = sanitize_url(wp_unslash($_COOKIE['fs_intent_redirect']));
 
         if (!$redirect || !filter_var($redirect, FILTER_VALIDATE_URL)) {
             return '';
@@ -376,6 +375,12 @@ class AuthService
             }
         }
 
+        // Without this WordPress shows the username wherever the name is displayed
+        if (!empty($extraData['display_name'])) {
+            $data['display_name'] = sanitize_text_field($extraData['display_name']);
+            $data['nickname'] = $data['display_name'];
+        }
+
         if (!empty($extraData['description'])) {
             $data['description'] = sanitize_textarea_field($extraData['description']);
         }
@@ -384,10 +389,17 @@ class AuthService
             $data['user_url'] = sanitize_url($extraData['user_url']);
         }
 
-        if (!empty($extraData['role'])) {
-            $data['role'] = $extraData['role'];
+        /*
+         * Every self-service signup ends here - the signup form, the customized login
+         * page, a social login - so this is the one place that refuses to make an
+         * administrator, whatever the default_role option or a filter says. A role is
+         * always set: left out, wp_insert_user() falls back to default_role by itself.
+         */
+        $role = !empty($extraData['role']) ? $extraData['role'] : get_option('default_role');
+        if (!is_string($role) || $role === 'administrator' || !get_role($role)) {
+            $role = 'subscriber';
         }
-
+        $data['role'] = $role;
 
         do_action('fluent_auth/before_creating_user', $data);
 
@@ -418,6 +430,78 @@ class AuthService
         return $user_id;
     }
 
+
+    /**
+     * A username for an account created from a social login, never the email address.
+     *
+     * The login leaks into the author URL (user_nicename) and, until a display name is
+     * set, everywhere WordPress prints the user's name. So it is built from the provider's
+     * own handle, then the part of the email before the @, then the person's name, and
+     * numbered only when all of those are taken.
+     */
+    public static function generateUsername($userData)
+    {
+        $emailName = self::toUsername(Arr::get($userData, 'email'));
+
+        $candidates = array_values(array_unique(array_filter([
+            self::toUsername(Arr::get($userData, 'username')),
+            $emailName,
+            self::toUsername(Arr::get($userData, 'first_name') . Arr::get($userData, 'last_name')),
+            self::toUsername(Arr::get($userData, 'full_name')),
+        ])));
+
+        foreach ($candidates as $candidate) {
+            if (self::isUsernameAvailable($candidate)) {
+                return $candidate;
+            }
+        }
+
+        // An address written entirely in a non-Latin script cleans down to nothing
+        $base = $emailName ?: ($candidates ? $candidates[0] : 'member');
+
+        $counter = 2;
+        while (!self::isUsernameAvailable($base . $counter)) {
+            $counter++;
+        }
+
+        return $base . $counter;
+    }
+
+    private static function toUsername($value)
+    {
+        $value = strtolower(trim((string)$value));
+
+        if (strpos($value, '@') !== false) {
+            $value = explode('@', $value)[0];
+        }
+
+        $value = preg_replace('/[^a-z0-9_]/', '', sanitize_user($value, true));
+
+        // user_nicename is capped at 50, and the counter needs room
+        return substr($value, 0, 40);
+    }
+
+    private static function isUsernameAvailable($username)
+    {
+        if (strlen($username) < 3) {
+            return false;
+        }
+
+        $reserved = [
+            'admin', 'administrator', 'root', 'system', 'sysadmin', 'superuser', 'webmaster',
+            'owner', 'staff', 'moderator', 'mod', 'support', 'help', 'helpdesk', 'info', 'contact',
+            'billing', 'sales', 'security', 'noreply', 'postmaster', 'hostmaster', 'abuse',
+            'wordpress', 'user', 'guest', 'test', 'demo', 'null', 'undefined'
+        ];
+
+        $illegal = array_map('strtolower', (array)apply_filters('illegal_user_logins', []));
+
+        if (in_array($username, $reserved, true) || in_array($username, $illegal, true)) {
+            return false;
+        }
+
+        return !username_exists($username);
+    }
 
     public static function checkUserRegDataErrors($user_login, $user_email, $extraArgs = [])
     {
