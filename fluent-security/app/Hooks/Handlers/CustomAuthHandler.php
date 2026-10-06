@@ -12,6 +12,14 @@ use FluentAuth\App\Services\SystemEmailService;
 
 class CustomAuthHandler
 {
+    /**
+     * The field types the signup form can render. A field of any other type given to
+     * `fluent_auth/registration_form_fields` is left out of the form.
+     *
+     * Public so a plugin adding fields can ask before it relies on one: releases before
+     * this constant existed render text, email and password only.
+     */
+    const SIGNUP_FIELD_TYPES = ['text', 'email', 'password', 'select'];
 
     public function register()
     {
@@ -430,11 +438,42 @@ class CustomAuthHandler
             }
 
             $html .= '<div class="fs_input_wrap"><input ' . $atts . '/></div>';
+        } else if ($fieldType === 'select') {
+            $html .= '<div class="fs_input_wrap">' . $this->renderSelect($fieldName, $field) . '</div>';
         } else {
             return '';
         }
 
         return $html . '</div>';
+    }
+
+    /**
+     * A select takes `options` as value => label. The placeholder, if any, becomes an
+     * empty first option, so a required select cannot be submitted untouched.
+     *
+     * @param $fieldName string
+     * @param $field array
+     * @return string
+     */
+    private function renderSelect($fieldName, $field)
+    {
+        $atts = 'id="' . esc_attr(Arr::get($field, 'id')) . '" name="' . esc_attr($fieldName) . '"';
+
+        if (Arr::get($field, 'required')) {
+            $atts .= ' required';
+        }
+
+        $options = '';
+
+        if ($placeholder = Arr::get($field, 'placeholder')) {
+            $options .= '<option value="" disabled selected>' . esc_html($placeholder) . '</option>';
+        }
+
+        foreach ((array)Arr::get($field, 'options', []) as $value => $label) {
+            $options .= '<option value="' . esc_attr($value) . '">' . esc_html($label) . '</option>';
+        }
+
+        return '<select ' . $atts . '>' . $options . '</select>';
     }
 
     /**
@@ -884,20 +923,16 @@ class CustomAuthHandler
             ], 422);
         }
 
-        // let's validate the name field
-        $fullName = trim(Arr::get($formData, 'first_name') . ' ' . Arr::get($formData, 'last_name'));
-        if (!empty($fullName)) {
-            // check if the name is valid
-            // Consider if there has any special characters like +, -, *, /, etc
-            // only check the +,-,*,$,/,=,%,!,@,#,^,&,*,(,),_,{,},[,],:,;,',",<,>,?,|,`,~,,
-            if (preg_match('/[\'^£$%&*()}{@#~?><>,|=_+¬-]/u', $fullName)) {
-                return __('Please provide a valid name', 'fluent-security');
-            }
-
-            // check if there has any http or https
-            if (preg_match('/http|https/', $fullName)) {
-                return __('Please provide a valid name', 'fluent-security');
-            }
+        /*
+         * Names are not policed for characters - O'Brien and Mary-Jane are names, and
+         * WordPress itself only runs sanitize_text_field() over them. A link is the one
+         * thing refused, because that is what a spam signup puts there.
+         */
+        $fullName = Arr::get($formData, 'first_name') . ' ' . Arr::get($formData, 'last_name');
+        if (stripos($fullName, 'http') !== false) {
+            wp_send_json([
+                'message' => __('Please provide a valid name', 'fluent-security')
+            ], 422);
         }
 
         if (apply_filters('fluent_auth/verify_signup_email', true, $formData)) {
@@ -1158,6 +1193,15 @@ class CustomAuthHandler
                     $errors[$fieldName] = sprintf(__('Provided %s is not a valid email', 'fluent-security'), esc_html(strtolower($field['label'])));
                 }
             }
+
+            if ($field['type'] === 'select' && !empty($data[$fieldName])) {
+                $value = $data[$fieldName];
+                $options = (array)Arr::get($field, 'options', []);
+                if (!is_scalar($value) || !array_key_exists((string)$value, $options)) {
+                    /* translators: %s: Form Field Label */
+                    $errors[$fieldName] = sprintf(__('Please select a valid %s', 'fluent-security'), esc_html(strtolower($field['label'])));
+                }
+            }
         }
 
         if (isset($fields['password']) && apply_filters('fluent_auth/validate_password_length', true)) {
@@ -1397,8 +1441,10 @@ class CustomAuthHandler
 
         $pStart = '<p style="font-family: Arial, sans-serif; font-size: 16px; font-weight: normal; margin: 0; margin-bottom: 16px;">';
 
+        $firstName = esc_html(sanitize_text_field(wp_unslash((string)Arr::get($formData, 'first_name'))));
+
         /* translators: %s: First Name */
-        $message = $pStart . sprintf(__('Hello %s,', 'fluent-security'), Arr::get($formData, 'first_name')) . '</p>' .
+        $message = $pStart . sprintf(__('Hello %s,', 'fluent-security'), $firstName) . '</p>' .
             $pStart . __('Thanks for signing up. Enter the code below on the registration page to finish setting up your account.', 'fluent-security') . '</p>' .
             /* translators: %s: Verification code */
             $pStart . '<b>' . sprintf(__('Verification Code: %s', 'fluent-security'), $verifcationCode) . '</b></p>' .
